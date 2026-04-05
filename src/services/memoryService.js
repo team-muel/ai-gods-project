@@ -132,8 +132,6 @@ export const saveDebateMemory = async (godId, { topic, content, consensus, debat
     }
   }
 
-  // 3. 통계 업데이트 (RPC 없어도 무시)
-  try { await supabase.rpc('update_god_stats', { p_god_id: godId }) } catch { }
 }
 
 // ── 관련 메모리 조회 ──────────────────────────────────────
