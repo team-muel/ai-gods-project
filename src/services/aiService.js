@@ -1,5 +1,6 @@
 import { getRelevantMemories, memoriesToContext } from './memoryService'
 import { searchWeb, searchResultsToContext } from './searchService'
+import { readFromObsidian } from './obsidianService'
 
 const IS_DEV     = import.meta.env.DEV              // 로컬 개발환경 여부
 const OLLAMA_URL = 'http://localhost:11434/api/chat'
@@ -76,11 +77,12 @@ const callModel = async (godId, userMessage, maxTokens = 350) => {
   }
 }
 
-// Round 1: 초기 의견 (기억 + 실시간 검색 주입)
+// Round 1: 초기 의견 (기억 + 실시간 검색 + Obsidian 과거 노트 주입)
 export const callAI = async (godId, topic, transcript = null) => {
-  const [memories, searchData] = await Promise.all([
+  const [memories, searchData, obsidianContext] = await Promise.all([
     getRelevantMemories(godId, topic),
     transcript ? null : searchWeb(topic, 4),
+    readFromObsidian(godId, topic),
   ])
 
   const memoryContext = memoriesToContext(memories)
@@ -90,11 +92,13 @@ export const callAI = async (godId, topic, transcript = null) => {
   if (transcript) {
     userMessage = [
       memoryContext,
+      obsidianContext,
       `다음은 YouTube 영상의 내용입니다:\n\n"${transcript.slice(0, 2000)}"\n\n위 영상에 대해 당신의 전문 분야 관점에서 분석하고 초기 의견을 제시하세요.`,
     ].filter(Boolean).join('\n\n')
   } else {
     userMessage = [
       memoryContext,
+      obsidianContext,
       searchContext,
       `주제: ${topic}\n\n당신의 전문 분야 관점에서 초기 의견을 제시하세요.`,
     ].filter(Boolean).join('\n\n')

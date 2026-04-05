@@ -57,6 +57,34 @@ ${consensus || ''}
   return { filePath, fileName, godDir }
 }
 
+// Obsidian CLI 실행 헬퍼
+import { execSync } from 'child_process'
+
+const obsidianCli = (cmd) => {
+  try {
+    return execSync(`obsidian ${cmd}`, { encoding: 'utf-8', timeout: 8000 }).trim()
+  } catch (e) {
+    throw new Error(`obsidian CLI 오류: ${e.message}`)
+  }
+}
+
+// Obsidian CLI로 노트 쓰기 (eval로 vault API 직접 호출)
+const writeNoteViaCli = (notePath, content) => {
+  const escaped = content.replace(/`/g, '\\`').replace(/\$/g, '\\$')
+  obsidianCli(`eval "app.vault.adapter.write('${notePath}', \`${escaped}\`)"`)
+}
+
+// Obsidian CLI로 검색
+const searchViaCli = (query, limit = 3) => {
+  try {
+    const raw = obsidianCli(`search query="${query}" format=json`)
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.slice(0, limit) : []
+  } catch {
+    return []
+  }
+}
+
 // Obsidian 변경 감지 → Supabase 업데이트
 const startObsidianWatcher = (vaultPath, supabaseClient) => {
   const watchGlob = path.join(vaultPath, 'AI-Gods', '**', '*.md')
@@ -237,56 +265,85 @@ export default defineConfig(({ mode }) => {
           // 파일 감시 시작 (Obsidian → Supabase)
           startObsidianWatcher(vaultPath, supabase)
 
-          // POST /api/obsidian/write — 토론 완료 후 Obsidian에 메모 작성
+          // POST /api/obsidian/write — CLI로 노트 작성 후 Obsidian이 즉시 인덱싱
           server.middlewares.use('/api/obsidian/write', async (req, res) => {
-            if (req.method !== 'POST') {
-              res.statusCode = 405
-              res.end('Method Not Allowed')
-              return
-            }
+            if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
 
             let body = ''
             req.on('data', chunk => (body += chunk))
             req.on('end', async () => {
               try {
                 const payload = JSON.parse(body)
-                // payload: { godId, godName, topic, debateId, opinion, consensus, score, existingLinks }
                 const { filePath, fileName } = writeGodMemoryNote(vaultPath, payload)
+
+                // CLI로 Obsidian에 알림 → 즉시 인덱싱
+                try {
+                  writeNoteViaCli(
+                    `AI-Gods/${payload.godId}/${fileName}`,
+                    fs.readFileSync(filePath, 'utf-8')
+                  )
+                  console.log(`[Obsidian CLI] ✅ ${payload.godName} 노트 인덱싱 완료`)
+                } catch {
+                  // CLI 실패해도 파일은 이미 저장됨 — 앱이 꺼져있을 때
+                  console.log(`[Obsidian] ✅ 파일 저장됨 (앱 미실행, 다음 시작 시 인덱싱)`)
+                }
 
                 res.setHeader('Content-Type', 'application/json')
                 res.end(JSON.stringify({ ok: true, file: fileName }))
-                console.log(`[Obsidian] ✅ 노트 작성: ${filePath}`)
               } catch (e) {
-                console.error('[Obsidian write 오류]', e.message)
                 res.statusCode = 500
                 res.end(JSON.stringify({ ok: false, error: e.message }))
               }
             })
           })
 
-          // GET /api/obsidian/links?godId=cso&topic=... — 관련 노트 링크 조회
-          server.middlewares.use('/api/obsidian/links', async (req, res) => {
+          // GET /api/obsidian/search?godId=cso&q=주제 — CLI로 관련 과거 노트 검색
+          server.middlewares.use('/api/obsidian/search', (req, res) => {
             const urlObj = new URL(req.url, 'http://localhost')
-            const godId = urlObj.searchParams.get('godId')
-
-            if (!godId) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ links: [] }))
-              return
-            }
-
-            const godDir = path.join(vaultPath, 'AI-Gods', godId)
-            if (!fs.existsSync(godDir)) {
-              res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ links: [] }))
-              return
-            }
-
-            const files = fs.readdirSync(godDir).filter(f => f.endsWith('.md'))
-            const links = files.map(f => `${godId}/${f.replace('.md', '')}`)
+            const godId  = urlObj.searchParams.get('godId')
+            const query  = urlObj.searchParams.get('q') || ''
 
             res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ links }))
+
+            try {
+              // Obsidian CLI search (앱 실행 중일 때)
+              const cliResults = searchViaCli(`${godId} ${query}`, 3)
+
+              if (cliResults.length > 0) {
+                const notes = cliResults.map(r => ({
+                  title:   r.title || r.path || '',
+                  snippet: r.snippet || r.content?.slice(0, 200) || '',
+                }))
+                console.log(`[Obsidian CLI] 🔍 ${godId} "${query}" → ${notes.length}개`)
+                res.end(JSON.stringify({ notes }))
+                return
+              }
+            } catch {
+              // CLI 실패 시 파일 직접 읽기로 폴백
+            }
+
+            // 폴백: 파일 시스템에서 직접 읽기
+            const godDir = path.join(vaultPath, 'AI-Gods', godId || '')
+            if (!godDir || !fs.existsSync(godDir)) {
+              res.end(JSON.stringify({ notes: [] }))
+              return
+            }
+
+            const files = fs.readdirSync(godDir)
+              .filter(f => f.endsWith('.md'))
+              .slice(-5) // 최근 5개
+
+            const notes = files.map(f => {
+              const raw     = fs.readFileSync(path.join(godDir, f), 'utf-8')
+              const { data: fm, content } = matter(raw)
+              return {
+                title:   fm.topic || f.replace('.md', ''),
+                snippet: content.slice(0, 200),
+              }
+            }).filter(n => n.title)
+
+            console.log(`[Obsidian FS] 🔍 ${godId} → ${notes.length}개 (폴백)`)
+            res.end(JSON.stringify({ notes }))
           })
         },
       },
