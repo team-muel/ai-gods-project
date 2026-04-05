@@ -1,22 +1,17 @@
 /**
- * Obsidian CLI 연동 서비스 — 지속적 읽기/쓰기 루프
+ * Obsidian 연동 서비스 — 읽기/쓰기
  *
- * 흐름:
- *   토론 전  → readFromObsidian(godId, topic) → 과거 노트 검색 → 프롬프트 주입
- *   토론 후  → syncDebateToObsidian(...)       → 새 노트 저장  → 다음 토론에서 참조
- *
- * 로컬 전용 (IS_DEV). Vercel에서는 자동 스킵.
+ * 로컬(dev):    http://localhost:3000/api/obsidian/... → vite.config.js 미들웨어 → 로컬 .md 파일 읽기/쓰기
+ * Vercel(prod): /api/obsidian/...                     → 서버리스 함수    → Supabase god_memories 읽기/쓰기
  */
 
-const BASE   = 'http://localhost:3000'
-const IS_DEV = import.meta.env.DEV
+const BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
 // ── 읽기: 토론 전 관련 과거 노트 검색 ─────────────────────
 export const readFromObsidian = async (godId, topic) => {
-  if (!IS_DEV) return ''
-
   try {
     const res  = await fetch(`${BASE}/api/obsidian/search?godId=${godId}&q=${encodeURIComponent(topic)}`)
+    if (!res.ok) return ''
     const data = await res.json()
 
     if (!data.notes || data.notes.length === 0) return ''
@@ -32,8 +27,6 @@ export const readFromObsidian = async (godId, topic) => {
 
 // ── 쓰기: 토론 후 Obsidian에 노트 저장 ─────────────────────
 export const syncDebateToObsidian = async ({ gods, topic, debateId, messages, consensus }) => {
-  if (!IS_DEV) return []
-
   const results = []
 
   for (const god of gods) {
