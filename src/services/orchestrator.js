@@ -3,9 +3,12 @@ import { AI_GODS } from '../config/aiGods';
 import { saveDebate, saveDebateMessages, saveDebateMemory } from './memoryService';
 import { syncDebateToObsidian } from './obsidianService';
 
-const MAX_ROUNDS = 4;
-const MIN_ROUNDS = 2;
-const CALL_DELAY = 3000; // Groq 무료 TPM 한도 대응 (신 간 딜레이)
+const IS_DEV = import.meta.env.DEV;
+
+// 로컬(Ollama): 최대 4라운드 / 프로덕션(Groq): 비용 절감을 위해 2라운드
+const MAX_ROUNDS = IS_DEV ? 4 : 2;
+const MIN_ROUNDS = IS_DEV ? 2 : 1;
+const CALL_DELAY = IS_DEV ? 0 : 3000; // Groq만 딜레이 적용
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
