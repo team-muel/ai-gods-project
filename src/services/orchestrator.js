@@ -1,4 +1,4 @@
-import { callAI, callAIDebate, checkConsensus, generateFinalConsensus } from './aiService';
+import { callAI, callAIDebate, checkConsensus, generateFinalConsensus, angelSummarize } from './aiService';
 import { AI_GODS } from '../config/aiGods';
 import { saveDebate, saveDebateMessages, saveDebateMemory } from './memoryService';
 import { syncDebateToObsidian } from './obsidianService';
@@ -51,12 +51,55 @@ export class DiscussionOrchestrator {
     }
 
     // ── Round 2 ~ MAX_ROUNDS: 동적 토론 ──────────────────
+    // 천사 요약본 저장: { godId: summaryText }
+    let angelSummaries = {};
+
     for (let round = 2; round <= MAX_ROUNDS; round++) {
+      // ── 천사 요약 단계 (이전 라운드 의견 → 핵심 논점 압축) ──
+      this._status(`👼 천사들이 Round ${round - 1} 의견을 요약 중...`);
+      const prevMsgs = this.messages.filter(m => m.round === round - 1 && !m.type);
+      angelSummaries = {};
+
+      if (IS_DEV) {
+        // Ollama: 병렬 처리
+        await Promise.all(prevMsgs.map(async (msg) => {
+          try {
+            const summary = await angelSummarize(msg.godId, msg.god, msg.content);
+            angelSummaries[msg.godId] = summary;
+            const angelMsg = { round: round - 1, godId: msg.godId, god: msg.god, emoji: '👼', type: 'angel', content: summary, timestamp: new Date().toISOString() };
+            this.messages.push(angelMsg);
+            if (this.onMessageCallback) this.onMessageCallback(angelMsg);
+          } catch (e) {
+            console.warn(`[Angel] ${msg.god} 요약 실패:`, e.message);
+            angelSummaries[msg.godId] = msg.content.slice(0, 200);
+          }
+        }));
+      } else {
+        // Groq: 순차 처리 (rate limit 방지)
+        for (const msg of prevMsgs) {
+          this._status(`👼 ${msg.god}의 천사가 요약 중...`);
+          try {
+            const summary = await angelSummarize(msg.godId, msg.god, msg.content);
+            angelSummaries[msg.godId] = summary;
+            const angelMsg = { round: round - 1, godId: msg.godId, god: msg.god, emoji: '👼', type: 'angel', content: summary, timestamp: new Date().toISOString() };
+            this.messages.push(angelMsg);
+            if (this.onMessageCallback) this.onMessageCallback(angelMsg);
+          } catch (e) {
+            console.warn(`[Angel] ${msg.god} 요약 실패:`, e.message);
+            angelSummaries[msg.godId] = msg.content.slice(0, 200);
+          }
+          await sleep(CALL_DELAY);
+        }
+      }
+
       this._status(`🔥 Round ${round} · 토론 진행 중...`);
 
       for (const god of AI_GODS) {
         this._status(`${god.symbol} ${god.name} 반론/동의 작성 중...`);
-        const otherOpinions = this.messages.filter(m => m.round === round - 1 && m.godId !== god.id);
+        // 천사 요약본으로 다른 신들의 의견 전달 (없으면 원본 사용)
+        const otherOpinions = prevMsgs
+          .filter(m => m.godId !== god.id)
+          .map(m => ({ god: m.god, content: angelSummaries[m.godId] || m.content }));
         try {
           const result = await callAIDebate(god.id, topic, otherOpinions);
           const msg = { round, godId: god.id, god: god.name, emoji: god.symbol, content: result.response, timestamp: result.timestamp };

@@ -170,6 +170,30 @@ export default function RightPanel({ selectedGod }) {
                 {messages.filter(m => m.round === round).map((msg, i) => {
                   const god = AI_GODS.find(g => g.id === msg.godId)
                   if (!god) return null
+
+                  // 천사 메시지
+                  if (msg.type === 'angel') {
+                    return (
+                      <div key={i} style={{ marginBottom: '8px', marginLeft: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '3px' }}>
+                          <span style={{ fontSize: '10px' }}>👼</span>
+                          <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: 'rgba(255,220,80,0.6)', letterSpacing: '0.1em' }}>
+                            {god.name}의 천사 · 전달
+                          </span>
+                        </div>
+                        <div style={{
+                          fontFamily: 'Rajdhani, sans-serif', fontSize: '11px',
+                          color: 'rgba(255,220,80,0.75)', lineHeight: 1.5,
+                          paddingLeft: '14px', borderLeft: '1px solid rgba(255,220,80,0.2)',
+                          fontStyle: 'italic', whiteSpace: 'pre-wrap',
+                        }}>
+                          {msg.content}
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // 신 메시지
                   return (
                     <div key={i} style={{ marginBottom: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>

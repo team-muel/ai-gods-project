@@ -30,6 +30,55 @@ const GOD_PROMPTS = {
   cto: `당신은 AI 기업의 최고 기술 책임자(CTO) Nexus입니다. 기술 아키텍처, 인프라, 기술적 실현 가능성 관점에서 분석합니다. 기술적 현실과 혁신 가능성을 균형 있게 제시하세요. 반드시 한국어로 답변하세요.`,
 }
 
+// 천사 전용 모델 호출 (중립 요약자 역할)
+const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 간결하게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
+
+const callAngelModel = async (godId, userMessage) => {
+  if (IS_DEV) {
+    const model = GOD_MODELS[godId]
+    if (!model) throw new Error(`Unknown godId: ${godId}`)
+    const response = await fetch(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: userMessage }],
+        stream: false,
+        options: { num_predict: 150 },
+      }),
+    })
+    if (!response.ok) throw new Error(`Ollama 천사 오류: ${response.status}`)
+    const data = await response.json()
+    return data.message?.content || ''
+  } else {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: ANGEL_SYSTEM_PROMPT },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: 150,
+        temperature: 0.5,
+      }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      throw new Error(`Groq 천사 오류: ${response.status} — ${err.error?.message || ''}`)
+    }
+    const data = await response.json()
+    return data.choices?.[0]?.message?.content || ''
+  }
+}
+
+// 천사 요약 — 신의 의견을 핵심 논점 3가지로 압축해 다른 신들에게 전달
+export const angelSummarize = async (godId, godName, opinion) => {
+  const prompt = `[${godName}의 의견]\n${opinion.slice(0, 600)}\n\n위 의견의 핵심 주장 3가지를 불릿 포인트(•)로 간결하게 요약하세요.`
+  return await callAngelModel(godId, prompt)
+}
+
 // AI 호출 — 로컬: Ollama / 프로덕션: Groq
 const callModel = async (godId, userMessage, maxTokens = 350) => {
   if (IS_DEV) {
