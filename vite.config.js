@@ -142,6 +142,38 @@ export default defineConfig(({ mode }) => {
         },
       },
 
+      // ── Groq 프록시 미들웨어 (로컬 CORS 해결) ──
+      {
+        name: 'groq-proxy',
+        configureServer(server) {
+          server.middlewares.use('/api/chat', (req, res) => {
+            if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
+            const groqKey = serperKey ? env.VITE_GROQ_API_KEY : ''
+            let body = ''
+            req.on('data', chunk => (body += chunk))
+            req.on('end', async () => {
+              try {
+                const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${env.VITE_GROQ_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body,
+                })
+                const data = await upstream.json()
+                res.setHeader('Content-Type', 'application/json')
+                res.statusCode = upstream.status
+                res.end(JSON.stringify(data))
+              } catch (e) {
+                res.statusCode = 500
+                res.end(JSON.stringify({ error: e.message }))
+              }
+            })
+          })
+        },
+      },
+
       // ── Serper 검색 미들웨어 ──
       {
         name: 'serper-search-api',

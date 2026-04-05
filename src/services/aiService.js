@@ -1,9 +1,7 @@
 import { getRelevantMemories, memoriesToContext } from './memoryService'
 import { searchWeb, searchResultsToContext } from './searchService'
 
-const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_MODEL = 'llama-3.1-8b-instant'
-const GROQ_KEY   = import.meta.env.VITE_GROQ_API_KEY
 
 // 각 신의 시스템 프롬프트 (Ollama Modelfile 대체)
 const GOD_PROMPTS = {
@@ -17,17 +15,14 @@ const GOD_PROMPTS = {
   cto: `당신은 AI 기업의 최고 기술 책임자(CTO) Nexus입니다. 기술 아키텍처, 인프라, 기술적 실현 가능성 관점에서 분석합니다. 기술적 현실과 혁신 가능성을 균형 있게 제시하세요. 반드시 한국어로 답변하세요.`,
 }
 
-// Groq API 호출
+// Groq API 호출 (Vercel 프록시 경유 → CORS 해결)
 const groqChat = async (godId, userMessage, maxTokens = 500) => {
   const systemPrompt = GOD_PROMPTS[godId]
   if (!systemPrompt) throw new Error(`Unknown godId: ${godId}`)
 
-  const response = await fetch(GROQ_URL, {
+  const response = await fetch('/api/chat', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GROQ_KEY}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: GROQ_MODEL,
       messages: [
