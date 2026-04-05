@@ -16,7 +16,7 @@ const GOD_PROMPTS = {
 }
 
 // Groq API 호출 (Vercel 프록시 경유 → CORS 해결)
-const groqChat = async (godId, userMessage, maxTokens = 500) => {
+const groqChat = async (godId, userMessage, maxTokens = 350) => {
   const systemPrompt = GOD_PROMPTS[godId]
   if (!systemPrompt) throw new Error(`Unknown godId: ${godId}`)
 

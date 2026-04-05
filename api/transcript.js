@@ -1,5 +1,3 @@
-import { YoutubeTranscript } from 'youtube-transcript'
-
 export default async function handler(req, res) {
   const { videoId } = req.query
 
@@ -8,6 +6,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    const { YoutubeTranscript } = await import('youtube-transcript')
+
     const transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'ko' })
       .catch(() => YoutubeTranscript.fetchTranscript(videoId))
 

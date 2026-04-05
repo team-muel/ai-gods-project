@@ -5,6 +5,9 @@ import { syncDebateToObsidian } from './obsidianService';
 
 const MAX_ROUNDS = 4;
 const MIN_ROUNDS = 2;
+const CALL_DELAY = 1500; // Groq 무료 TPM 한도 대응 (신 간 딜레이)
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 export class DiscussionOrchestrator {
   constructor() {
@@ -41,6 +44,7 @@ export class DiscussionOrchestrator {
       } catch (err) {
         console.error(`❌ ${god.name} Round 1:`, err);
       }
+      await sleep(CALL_DELAY);
     }
 
     // ── Round 2 ~ MAX_ROUNDS: 동적 토론 ──────────────────
@@ -58,6 +62,7 @@ export class DiscussionOrchestrator {
         } catch (err) {
           console.error(`❌ ${god.name} Round ${round}:`, err);
         }
+        await sleep(CALL_DELAY);
       }
 
       if (round >= MIN_ROUNDS) {
