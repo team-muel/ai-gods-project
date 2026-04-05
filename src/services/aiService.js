@@ -80,7 +80,7 @@ export const angelSummarize = async (godId, godName, opinion) => {
 }
 
 // AI 호출 — 로컬: Ollama / 프로덕션: Groq
-const callModel = async (godId, userMessage, maxTokens = 350) => {
+const callModel = async (godId, userMessage, maxTokens = 600) => {
   if (IS_DEV) {
     // ── 로컬: Ollama ──────────────────────────────────────
     const model = GOD_MODELS[godId]

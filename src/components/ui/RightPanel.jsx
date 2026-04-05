@@ -2,6 +2,15 @@ import { useState } from 'react'
 import { AI_GODS } from '../../config/aiGods'
 import { useDiscussionStore } from '../../store/discussionStore'
 
+// 마크다운 기호 제거 (**, *, #, - 등)
+const cleanMarkdown = (text) =>
+  text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[-•]\s+/gm, '• ')
+    .trim()
+
 
 export default function RightPanel({ selectedGod }) {
   const { messages, topic, isDiscussing, consensus, currentRound, rounds, statusText } = useDiscussionStore()
@@ -188,7 +197,7 @@ export default function RightPanel({ selectedGod }) {
                           paddingLeft: '14px', borderLeft: '1px solid rgba(255,220,80,0.2)',
                           fontStyle: 'italic', whiteSpace: 'pre-wrap',
                         }}>
-                          {msg.content}
+                          {cleanMarkdown(msg.content)}
                         </div>
                       </div>
                     )
@@ -209,7 +218,7 @@ export default function RightPanel({ selectedGod }) {
                         paddingLeft: '18px', borderLeft: `2px solid ${god.color}33`,
                         wordBreak: 'keep-all', overflowWrap: 'break-word',
                       }}>
-                        {msg.content}
+                        {cleanMarkdown(msg.content)}
                       </div>
                     </div>
                   )
