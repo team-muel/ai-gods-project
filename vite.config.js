@@ -6,7 +6,6 @@ import path from 'path'
 import chokidar from 'chokidar'
 import matter from 'gray-matter'
 import { createClient } from '@supabase/supabase-js'
-import https from 'https'
 
 // ── Obsidian 유틸 ───────────────────────────────────────────
 const slugify = (text) =>
@@ -106,7 +105,6 @@ export default defineConfig(({ mode }) => {
   const vaultPath   = env.OBSIDIAN_VAULT_PATH || ''
   const supabaseUrl = env.VITE_SUPABASE_URL
   const supabaseKey = env.VITE_SUPABASE_ANON_KEY
-  const serperKey   = env.SERPER_API_KEY || ''
 
   return {
     plugins: [
@@ -174,17 +172,11 @@ export default defineConfig(({ mode }) => {
         },
       },
 
-      // ── Serper 검색 미들웨어 ──
+      // ── DuckDuckGo 크롤링 미들웨어 (Serper 대체) ──
       {
-        name: 'serper-search-api',
+        name: 'search-crawl',
         configureServer(server) {
-          server.middlewares.use('/api/search', (req, res) => {
-            if (!serperKey) {
-              res.statusCode = 500
-              res.end(JSON.stringify({ error: 'SERPER_API_KEY가 설정되지 않았습니다.' }))
-              return
-            }
-
+          server.middlewares.use('/api/search', async (req, res) => {
             const urlObj = new URL(req.url, 'http://localhost')
             const query  = urlObj.searchParams.get('q')
             const num    = parseInt(urlObj.searchParams.get('num') || '5')
@@ -195,46 +187,38 @@ export default defineConfig(({ mode }) => {
               return
             }
 
-            const body = JSON.stringify({ q: query, num, hl: 'ko', gl: 'kr' })
-            const options = {
-              hostname: 'google.serper.dev',
-              path: '/search',
-              method: 'POST',
-              headers: {
-                'X-API-KEY': serperKey,
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-              },
-            }
-
-            const request = https.request(options, (apiRes) => {
-              let data = ''
-              apiRes.on('data', chunk => (data += chunk))
-              apiRes.on('end', () => {
-                try {
-                  const parsed = JSON.parse(data)
-                  // 핵심 결과만 추출 (토큰 절약)
-                  const results = (parsed.organic || []).slice(0, num).map(r => ({
-                    title:   r.title,
-                    snippet: r.snippet,
-                    link:    r.link,
-                  }))
-                  const knowledgePanel = parsed.knowledgeGraph || null
-                  res.setHeader('Content-Type', 'application/json')
-                  res.end(JSON.stringify({ results, knowledgePanel, query }))
-                } catch (e) {
-                  res.statusCode = 500
-                  res.end(JSON.stringify({ error: '검색 결과 파싱 오류' }))
+            try {
+              const response = await fetch(
+                `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=kr-kr`,
+                {
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'ko-KR,ko;q=0.9',
+                    'Accept': 'text/html',
+                  },
                 }
-              })
-            })
+              )
 
-            request.on('error', (e) => {
-              res.statusCode = 500
-              res.end(JSON.stringify({ error: e.message }))
-            })
-            request.write(body)
-            request.end()
+              const html = await response.text()
+              const titleMatches   = [...html.matchAll(/class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>/g)]
+              const snippetMatches = [...html.matchAll(/class="result__snippet"[^>]*>([^<]+)<\/a>/g)]
+
+              const count = Math.min(num, titleMatches.length)
+              const results = []
+              for (let i = 0; i < count; i++) {
+                const title   = titleMatches[i]?.[2]?.trim() || ''
+                const link    = titleMatches[i]?.[1]?.trim() || ''
+                const snippet = snippetMatches[i]?.[1]?.trim() || ''
+                if (title) results.push({ title, snippet, link })
+              }
+
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ results, knowledgePanel: null, query }))
+            } catch (e) {
+              console.error('[Search] 크롤링 실패:', e.message)
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ results: [], knowledgePanel: null, query }))
+            }
           })
         },
       },
