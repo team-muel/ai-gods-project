@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AI_GODS } from '../../config/aiGods'
 import { useDiscussionStore } from '../../store/discussionStore'
 
+
 export default function RightPanel({ selectedGod }) {
   const { messages, topic, isDiscussing, consensus, currentRound, rounds, statusText } = useDiscussionStore()
   const [activeTab, setActiveTab] = useState('log') // 'log' | 'consensus'
@@ -18,7 +19,7 @@ export default function RightPanel({ selectedGod }) {
         width: '380px',
         padding: '16px',
         borderColor: 'rgba(100, 200, 255, 0.15)',
-        maxHeight: '80vh',
+        maxHeight: '92vh',
         display: 'flex',
         flexDirection: 'column',
       }}
@@ -132,7 +133,7 @@ export default function RightPanel({ selectedGod }) {
           {topic && (
             <div style={{ background: 'rgba(0,80,160,0.15)', border: '1px solid rgba(0,150,255,0.2)', borderRadius: '2px', padding: '8px', marginBottom: '10px' }}>
               <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.5)', letterSpacing: '0.15em', marginBottom: '4px' }}>TOPIC</div>
-              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(255,255,255,0.8)', lineHeight: 1.4 }}>{topic}</div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(255,255,255,0.8)', lineHeight: 1.4, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{topic}</div>
             </div>
           )}
 
@@ -206,6 +207,7 @@ export default function RightPanel({ selectedGod }) {
                         fontFamily: 'Rajdhani, sans-serif', fontSize: '13px',
                         color: 'rgba(255,255,255,0.75)', lineHeight: 1.6,
                         paddingLeft: '18px', borderLeft: `2px solid ${god.color}33`,
+                        wordBreak: 'keep-all', overflowWrap: 'break-word',
                       }}>
                         {msg.content}
                       </div>

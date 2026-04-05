@@ -64,7 +64,8 @@ export default function CenterHologram({ topic, isActive }) {
           <div
             style={{
               textAlign: 'center',
-              maxWidth: '200px',
+              maxWidth: '320px',
+              width: '320px',
             }}
           >
             <div
@@ -81,11 +82,17 @@ export default function CenterHologram({ topic, isActive }) {
             <div
               style={{
                 fontFamily: 'Rajdhani, sans-serif',
-                fontSize: '14px',
+                fontSize: '13px',
                 fontWeight: 600,
                 color: '#ffffff',
                 textShadow: '0 0 10px rgba(100,200,255,0.8)',
-                lineHeight: 1.3,
+                lineHeight: 1.4,
+                wordBreak: 'keep-all',
+                overflowWrap: 'break-word',
+                display: '-webkit-box',
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
               }}
             >
               {topic}

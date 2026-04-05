@@ -11,7 +11,9 @@
     "finetune": "finetune_env/Scripts/python scripts/finetune.py --all",
     "finetune:god": "finetune_env/Scripts/python scripts/finetune.py --god",
     "update-models": "node scripts/update_ollama_models.js",
-    "train": "npm run export-data && npm run finetune && npm run update-models"
+    "train": "npm run export-data && npm run finetune && npm run update-models",
+    "sync-obsidian": "node --env-file=.env scripts/sync-obsidian.cjs",
+    "watch-obsidian": "node --env-file=.env scripts/watch-obsidian.cjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.3",
