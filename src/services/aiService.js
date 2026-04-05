@@ -131,13 +131,24 @@ export const checkConsensus = async (topic, roundMessages) => {
 
 // 최종 합의안 생성
 export const generateFinalConsensus = async (topic, allMessages) => {
-  const summary = allMessages
-    .map(m => `[${m.god} R${m.round}]: ${m.content}`)
-    .join('\n\n')
+  let prompt
 
-  const content = await callModel('cdo',
-    `당신은 지금 회의 진행자 역할입니다. 반드시 한국어로 작성하세요.\n\n주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요:\n\n📊 핵심 합의점 (3가지)\n⚡ 주요 쟁점 및 이견\n✅ 최종 권고사항 (단기/중기/장기)`,
-    800
-  )
+  if (IS_DEV) {
+    // 로컬(Ollama): 전체 내용 전송
+    const summary = allMessages
+      .map(m => `[${m.god} R${m.round}]: ${m.content}`)
+      .join('\n\n')
+    prompt = `당신은 지금 회의 진행자 역할입니다. 반드시 한국어로 작성하세요.\n\n주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요:\n\n📊 핵심 합의점 (3가지)\n⚡ 주요 쟁점 및 이견\n✅ 최종 권고사항 (단기/중기/장기)`
+  } else {
+    // 프로덕션(Groq): 마지막 라운드만 + 150자 제한 (토큰 초과 방지)
+    const lastRound = Math.max(...allMessages.map(m => m.round))
+    const summary = allMessages
+      .filter(m => m.round === lastRound)
+      .map(m => `[${m.god}]: ${m.content.slice(0, 150)}`)
+      .join('\n')
+    prompt = `반드시 한국어로 작성하세요.\n\n주제: ${topic}\n\n최종 라운드 요약:\n${summary}\n\n📊 핵심 합의점 3가지\n⚡ 주요 이견\n✅ 단기/중기/장기 권고사항`
+  }
+
+  const content = await callModel('cdo', prompt, IS_DEV ? 800 : 500)
   return content
 }
