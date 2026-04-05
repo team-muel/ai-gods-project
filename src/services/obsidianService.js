@@ -6,9 +6,12 @@
  */
 
 const BASE = 'http://localhost:3000'
+const IS_DEV = import.meta.env.DEV
 
 // 토론 완료 후 모든 신의 기억을 Obsidian에 작성
 export const syncDebateToObsidian = async ({ gods, topic, debateId, messages, consensus }) => {
+  // Obsidian은 로컬 전용 — Vercel에서는 스킵
+  if (!IS_DEV) return []
   const results = []
 
   for (const god of gods) {
