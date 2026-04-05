@@ -1,7 +1,21 @@
 import { getRelevantMemories, memoriesToContext } from './memoryService'
 import { searchWeb, searchResultsToContext } from './searchService'
 
+const IS_DEV     = import.meta.env.DEV              // 로컬 개발환경 여부
+const OLLAMA_URL = 'http://localhost:11434/api/chat'
 const GROQ_MODEL = 'llama-3.1-8b-instant'
+
+// 로컬 전용 Ollama 모델명
+const GOD_MODELS = {
+  cco: 'ai-muse',
+  cso: 'ai-atlas',
+  cpo: 'ai-forge',
+  cmo: 'ai-mercury',
+  cxo: 'ai-empathy',
+  cfo: 'ai-prudence',
+  cdo: 'ai-oracle',
+  cto: 'ai-nexus',
+}
 
 // 각 신의 시스템 프롬프트 (Ollama Modelfile 대체)
 const GOD_PROMPTS = {
@@ -15,32 +29,51 @@ const GOD_PROMPTS = {
   cto: `당신은 AI 기업의 최고 기술 책임자(CTO) Nexus입니다. 기술 아키텍처, 인프라, 기술적 실현 가능성 관점에서 분석합니다. 기술적 현실과 혁신 가능성을 균형 있게 제시하세요. 반드시 한국어로 답변하세요.`,
 }
 
-// Groq API 호출 (Vercel 프록시 경유 → CORS 해결)
-const groqChat = async (godId, userMessage, maxTokens = 350) => {
-  const systemPrompt = GOD_PROMPTS[godId]
-  if (!systemPrompt) throw new Error(`Unknown godId: ${godId}`)
+// AI 호출 — 로컬: Ollama / 프로덕션: Groq
+const callModel = async (godId, userMessage, maxTokens = 350) => {
+  if (IS_DEV) {
+    // ── 로컬: Ollama ──────────────────────────────────────
+    const model = GOD_MODELS[godId]
+    if (!model) throw new Error(`Unknown godId: ${godId}`)
 
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      max_tokens: maxTokens,
-      temperature: 0.8,
-    }),
-  })
+    const response = await fetch(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: userMessage }],
+        stream: false,
+        options: { num_predict: maxTokens },
+      }),
+    })
+    if (!response.ok) throw new Error(`Ollama 오류: ${response.status}`)
+    const data = await response.json()
+    return data.message?.content || '응답을 받지 못했습니다.'
+  } else {
+    // ── 프로덕션: Groq (Vercel 프록시) ───────────────────
+    const systemPrompt = GOD_PROMPTS[godId]
+    if (!systemPrompt) throw new Error(`Unknown godId: ${godId}`)
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}))
-    throw new Error(`Groq 오류: ${response.status} — ${err.error?.message || ''}`)
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.8,
+      }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      throw new Error(`Groq 오류: ${response.status} — ${err.error?.message || ''}`)
+    }
+    const data = await response.json()
+    return data.choices?.[0]?.message?.content || '응답을 받지 못했습니다.'
   }
-
-  const data = await response.json()
-  return data.choices?.[0]?.message?.content || '응답을 받지 못했습니다.'
 }
 
 // Round 1: 초기 의견 (기억 + 실시간 검색 주입)
@@ -67,7 +100,7 @@ export const callAI = async (godId, topic, transcript = null) => {
     ].filter(Boolean).join('\n\n')
   }
 
-  const content = await groqChat(godId, userMessage)
+  const content = await callModel(godId, userMessage)
   return { godId, response: content, timestamp: new Date().toISOString() }
 }
 
@@ -79,7 +112,7 @@ export const callAIDebate = async (godId, topic, otherOpinions) => {
 
   const userMessage = `주제: ${topic}\n\n다른 임원들의 의견:\n${opinionsText}\n\n위 의견들에 대해 동의/반박/보완하며 토론하세요. 누구의 의견에 반응하는지 구체적으로 언급하세요.`
 
-  const content = await groqChat(godId, userMessage)
+  const content = await callModel(godId, userMessage)
   return { godId, response: content, timestamp: new Date().toISOString() }
 }
 
@@ -89,7 +122,7 @@ export const checkConsensus = async (topic, roundMessages) => {
     .map(m => `[${m.god}]: ${m.content.slice(0, 120)}`)
     .join('\n')
 
-  const content = await groqChat('cdo',
+  const content = await callModel('cdo',
     `토론 주제: ${topic}\n\n최근 발언:\n${summary}\n\n이 토론에서 충분한 합의가 도출되었습니까? "예" 또는 "아니오"로만 답하세요.`,
     10
   )
@@ -102,7 +135,7 @@ export const generateFinalConsensus = async (topic, allMessages) => {
     .map(m => `[${m.god} R${m.round}]: ${m.content}`)
     .join('\n\n')
 
-  const content = await groqChat('cdo',
+  const content = await callModel('cdo',
     `당신은 지금 회의 진행자 역할입니다. 반드시 한국어로 작성하세요.\n\n주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요:\n\n📊 핵심 합의점 (3가지)\n⚡ 주요 쟁점 및 이견\n✅ 최종 권고사항 (단기/중기/장기)`,
     800
   )
