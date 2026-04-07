@@ -21,7 +21,7 @@ jobs:
           node-version: '20'
 
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js node-fetch
+        run: npm install @supabase/supabase-js node-fetch googleapis
 
       - name: 자동 토론 실행
         env:
@@ -29,4 +29,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
         run: node scripts/auto-debate.mjs
