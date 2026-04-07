@@ -29,37 +29,7 @@
 - **상태 관리**: Zustand
 - **스타일링**: Tailwind CSS
 
-## 시작하기
 
-```bash
-# 의존성 설치
-npm install
-
-# 개발 서버 시작 (http://localhost:3000)
-npm run dev
-
-# 프로덕션 빌드
-npm run build
-```
-
-## 프로젝트 구조
-
-```
-src/
-├── config/
-│   └── aiGods.js          # 8명의 AI 신 정의
-├── components/
-│   ├── GodSphere.jsx      # 3D AI 구체
-│   ├── ConnectionLines.jsx # AI 간 연결선
-│   ├── CenterHologram.jsx # 중앙 홀로그램
-│   └── ui/
-│       ├── LeftPanel.jsx  # 질문 입력 패널
-│       ├── RightPanel.jsx # 실시간 로그 패널
-│       └── BottomBar.jsx  # 하단 통계 바
-├── App.jsx                # 메인 앱
-├── main.jsx               # 진입점
-└── index.css              # 전역 스타일
-```
 
 ## 개발 로드맵
 
