@@ -7,6 +7,9 @@ on:
     - cron: '0 0,2,4,6,8,10,12,14 * * *'
   workflow_dispatch:  # 수동 실행 버튼
 
+permissions:
+  contents: write
+
 jobs:
   debate:
     runs-on: ubuntu-latest
@@ -14,6 +17,8 @@ jobs:
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Node.js 설정
         uses: actions/setup-node@v4
