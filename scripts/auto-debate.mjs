@@ -182,15 +182,14 @@ const runDebate = async (topic) => {
 
   // 최종 합의안 (마지막 라운드만 + 150자 제한 — 토큰 초과 방지)
   console.log('📊 최종 합의안 생성 중...')
-  const oracleGod = GODS.find(g => g.id === 'cdo')
   const lastSummary = messages
     .filter(m => m.round === finalRound)
     .map(m => `[${m.god}]: ${m.content.slice(0, 150)}`)
     .join('\n')
   const consensus = await groqChat(
-    oracleGod.prompt,
-    `반드시 한국어로 작성하세요.\n주제: ${topic}\n\n최종 라운드 요약:\n${lastSummary}\n\n📊 핵심 합의점 3가지\n⚡ 주요 이견\n✅ 단기/중기/장기 권고사항`,
-    500
+    `당신은 AI 기업의 최고 데이터 책임자(CDO) Oracle입니다. 반드시 한국어로만 작성하세요. 영어, 중국어 등 다른 언어는 절대 사용하지 마세요. 문장을 끝까지 완성하세요.`,
+    `반드시 한국어로만 작성하세요. 문장을 중간에 끊지 말고 완전하게 작성하세요.\n\n주제: ${topic}\n\n최종 라운드 요약:\n${lastSummary}\n\n아래 형식으로 작성하세요:\n\n📊 핵심 합의점 3가지\n1. \n2. \n3. \n\n⚡ 주요 이견\n\n✅ 권고사항\n- 단기:\n- 중기:\n- 장기:`,
+    800
   )
 
   // Supabase 저장
