@@ -21,7 +21,7 @@ jobs:
           node-version: '20'
 
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js node-fetch googleapis
+        run: npm install @supabase/supabase-js node-fetch
 
       - name: 자동 토론 실행
         env:
@@ -29,6 +29,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
         run: node scripts/auto-debate.mjs
+
+      - name: 토론 결과 자동 커밋
+        run: |
+          git config user.name "AI Gods Bot"
+          git config user.email "bot@ai-gods.auto"
+          git add debates/
+          git diff --cached --quiet || git commit -m "auto: 토론 결과 저장 $(date +'%Y-%m-%d %H:%M')"
+          git push

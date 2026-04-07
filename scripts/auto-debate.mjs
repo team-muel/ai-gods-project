@@ -6,58 +6,27 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import { google } from 'googleapis'
-import { Readable } from 'stream'
+import fs from 'fs'
+import path from 'path'
 
-const GROQ_URL        = 'https://api.groq.com/openai/v1/chat/completions'
-const GROQ_MODEL      = 'llama-3.1-8b-instant'
-const GROQ_KEY        = process.env.GROQ_API_KEY
-const SERPER_KEY      = process.env.SERPER_API_KEY
-const GDRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GDRIVE_SA_JSON   = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions'
+const GROQ_MODEL = 'llama-3.1-8b-instant'
+const GROQ_KEY   = process.env.GROQ_API_KEY
+const SERPER_KEY = process.env.SERPER_API_KEY
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 )
 
-// ── Google Drive 설정 ─────────────────────────────────────────
-let driveClient = null
-if (GDRIVE_SA_JSON && GDRIVE_FOLDER_ID) {
-  try {
-    const sa = JSON.parse(GDRIVE_SA_JSON)
-    const auth = new google.auth.GoogleAuth({
-      credentials: sa,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
-    })
-    driveClient = google.drive({ version: 'v3', auth })
-    console.log('☁️  Google Drive 연결됨')
-  } catch (e) {
-    console.warn('⚠️  Google Drive 설정 실패 (스킵):', e.message)
-  }
-}
-
 const slugify = (text) =>
   text.toLowerCase().replace(/[^\w\s가-힣]/g, '').replace(/\s+/g, '-').slice(0, 50)
 
-const uploadToDrive = async (fileName, content) => {
-  if (!driveClient || !content) return
-  try {
-    await driveClient.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [GDRIVE_FOLDER_ID],
-        mimeType: 'text/markdown',
-      },
-      media: {
-        mimeType: 'text/markdown',
-        body: Readable.from([content]),
-      },
-    })
-    console.log(`  ☁️  Drive 업로드: ${fileName}`)
-  } catch (e) {
-    console.warn(`  ⚠️  Drive 업로드 실패: ${e.message}`)
-  }
+const writeDebateFile = (fileName, content) => {
+  const dir = path.resolve('debates')
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, fileName), content, 'utf-8')
+  console.log(`  📄 파일 저장: debates/${fileName}`)
 }
 
 // ── 신 설정 ───────────────────────────────────────────────
@@ -249,14 +218,13 @@ const runDebate = async (topic) => {
     }
     console.log(`✅ 저장 완료 (debate_id: ${debate.id})`)
 
-    // Google Drive 업로드
-    if (driveClient) {
-      console.log('☁️  Google Drive 업로드 중...')
-      const date = new Date().toISOString().slice(0, 10)
-      const slug = slugify(topic)
+    // 파일 저장 (GitHub Actions가 자동 커밋)
+    console.log('📄 토론 파일 저장 중...')
+    const date = new Date().toISOString().slice(0, 10)
+    const slug = slugify(topic)
 
-      // 토론 요약 파일
-      const summaryContent = `---
+    // 토론 요약 파일
+    const summaryContent = `---
 debate_id: ${debate.id}
 topic: "${topic.replace(/"/g, "'").slice(0, 100)}"
 type: summary
@@ -268,14 +236,14 @@ created_at: ${new Date().toISOString()}
 ## 최종 합의안
 ${consensus}
 `
-      await uploadToDrive(`${date}-summary-${slug}.md`, summaryContent)
+    writeDebateFile(`${date}-summary-${slug}.md`, summaryContent)
 
-      // 각 신의 의견 파일
-      for (const god of GODS) {
-        const myMsgs = messages.filter(m => m.godId === god.id)
-        if (myMsgs.length === 0) continue
-        const last = myMsgs[myMsgs.length - 1]
-        const noteContent = `---
+    // 각 신의 의견 파일
+    for (const god of GODS) {
+      const myMsgs = messages.filter(m => m.godId === god.id)
+      if (myMsgs.length === 0) continue
+      const last = myMsgs[myMsgs.length - 1]
+      const noteContent = `---
 god_id: ${god.id}
 god_name: ${god.name}
 topic: "${topic.replace(/"/g, "'").slice(0, 100)}"
@@ -291,8 +259,7 @@ ${last.content}
 ## 최종 합의
 ${consensus}
 `
-        await uploadToDrive(`${date}-${god.id}-${slug}.md`, noteContent)
-      }
+      writeDebateFile(`${date}-${god.id}-${slug}.md`, noteContent)
     }
   }
 
