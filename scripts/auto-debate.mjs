@@ -243,7 +243,7 @@ const runDebate = async (topic) => {
       await supabase.from('god_memories').insert({
         god_id: god.id, debate_id: debate.id, topic,
         my_opinion: last.content.slice(0, 600),
-        consensus: consensus.slice(0, 400),
+        consensus: consensus,
         relevance_score: 1.0,
       })
     }
