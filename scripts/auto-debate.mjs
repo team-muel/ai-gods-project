@@ -43,27 +43,44 @@ const TOPIC_POOL = [
   '데이터 주권과 AI 학습 데이터 확보 전략',
 ]
 
-// ── Groq 호출 ─────────────────────────────────────────────
+// ── Groq 호출 (429 자동 재시도) ──────────────────────────
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const MAX_RETRIES = 7
+
 const groqChat = async (systemPrompt, userMessage, maxTokens = 400) => {
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GROQ_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      max_tokens: maxTokens,
-      temperature: 0.8,
-    }),
-  })
-  if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`)
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content || ''
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.8,
+      }),
+    })
+
+    const data = await res.json()
+
+    if (res.status === 429) {
+      const msg = data?.error?.message || ''
+      const match = msg.match(/try again in ([\d.]+)s/)
+      const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 1000 : 20000
+      console.log(`    ⏳ Rate limit, ${Math.round(waitMs/1000)}초 대기 후 재시도... (${attempt + 1}/${MAX_RETRIES})`)
+      await sleep(waitMs)
+      continue
+    }
+
+    if (!res.ok) throw new Error(`Groq ${res.status}: ${JSON.stringify(data)}`)
+    return data.choices?.[0]?.message?.content || ''
+  }
+  throw new Error('최대 재시도 횟수 초과')
 }
 
 // ── Serper 검색 ───────────────────────────────────────────
@@ -82,7 +99,7 @@ const searchTopic = async (topic) => {
 }
 
 // ── 메모리 조회 ───────────────────────────────────────────
-const getMemories = async (godId, topic) => {
+const getMemories = async (godId) => {
   const { data } = await supabase
     .from('god_memories')
     .select('topic, my_opinion, created_at')
@@ -122,7 +139,7 @@ const runDebate = async (topic) => {
   // Round 1
   console.log('📢 Round 1 — 초기 의견')
   for (const god of GODS) {
-    const memCtx = await getMemories(god.id, topic)
+    const memCtx = await getMemories(god.id)
     const userMsg = [memCtx, searchCtx, `주제: ${topic}\n\n당신의 전문 분야 관점에서 초기 의견을 제시하세요.`].filter(Boolean).join('\n')
     const content = await groqChat(god.prompt, userMsg)
     messages.push({ round: 1, godId: god.id, god: god.name, content, timestamp: new Date().toISOString() })
