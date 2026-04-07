@@ -10,7 +10,10 @@ Supabase god_memories → Unsloth 학습용 JSONL 변환 스크립트
 import os
 import json
 from pathlib import Path
+from dotenv import load_dotenv
 from supabase import create_client
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 SUPABASE_URL = os.environ.get("VITE_SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("VITE_SUPABASE_ANON_KEY")
@@ -84,10 +87,10 @@ def main():
             for entry in entries:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-        print(f"  ✅ {god_id}: {len(entries)}개 → {out_path}")
+        print(f"  [OK] {god_id}: {len(entries)}개 -> {out_path}")
         total += len(entries)
 
-    print(f"\n🎉 총 {total}개 학습 샘플 생성 완료")
+    print(f"\n[완료] 총 {total}개 학습 샘플 생성")
 
 if __name__ == "__main__":
     main()
