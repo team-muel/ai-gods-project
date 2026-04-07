@@ -77,6 +77,7 @@ const groqChat = async (systemPrompt, userMessage, maxTokens = 400) => {
       continue
     }
 
+    if (res.status === 413) throw new Error(`요청이 너무 큼 (413): 메시지를 줄이세요.`)
     if (!res.ok) throw new Error(`Groq ${res.status}: ${JSON.stringify(data)}`)
     return data.choices?.[0]?.message?.content || ''
   }
@@ -152,7 +153,7 @@ const runDebate = async (topic) => {
     console.log(`📢 Round ${round} — 토론`)
     for (const god of GODS) {
       const others = messages.filter(m => m.round === round - 1 && m.godId !== god.id)
-      const opinionsText = others.map(o => `[${o.god}]: ${o.content}`).join('\n\n')
+      const opinionsText = others.map(o => `[${o.god}]: ${o.content.slice(0, 200)}`).join('\n\n')
       const userMsg = `주제: ${topic}\n\n다른 임원 의견:\n${opinionsText}\n\n동의/반박/보완하며 토론하세요.`
       const content = await groqChat(god.prompt, userMsg)
       messages.push({ round, godId: god.id, god: god.name, content, timestamp: new Date().toISOString() })
@@ -167,14 +168,17 @@ const runDebate = async (topic) => {
     }
   }
 
-  // 최종 합의안
+  // 최종 합의안 (마지막 라운드만 + 150자 제한 — 토큰 초과 방지)
   console.log('📊 최종 합의안 생성 중...')
   const oracleGod = GODS.find(g => g.id === 'cdo')
-  const allSummary = messages.map(m => `[${m.god} R${m.round}]: ${m.content}`).join('\n\n')
+  const lastSummary = messages
+    .filter(m => m.round === finalRound)
+    .map(m => `[${m.god}]: ${m.content.slice(0, 150)}`)
+    .join('\n')
   const consensus = await groqChat(
     oracleGod.prompt,
-    `반드시 한국어로 작성하세요.\n주제: ${topic}\n\n전체 토론:\n${allSummary}\n\n📊 핵심 합의점 (3가지)\n⚡ 주요 쟁점\n✅ 최종 권고사항 (단기/중기/장기)`,
-    600
+    `반드시 한국어로 작성하세요.\n주제: ${topic}\n\n최종 라운드 요약:\n${lastSummary}\n\n📊 핵심 합의점 3가지\n⚡ 주요 이견\n✅ 단기/중기/장기 권고사항`,
+    500
   )
 
   // Supabase 저장
