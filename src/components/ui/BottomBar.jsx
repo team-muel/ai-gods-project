@@ -1,5 +1,3 @@
-import { useDebateStats } from '../../hooks/useDebateStats'
-
 const READINESS_CONFIG = {
   collecting:  { color: 'rgba(100, 200, 255, 0.4)', label: '데이터 수집 중',    glow: 'none' },
   possible:    { color: '#ffd700',                  label: '파인튜닝 가능',      glow: '0 0 6px #ffd700' },
@@ -7,9 +5,17 @@ const READINESS_CONFIG = {
   excellent:   { color: '#00ff88',                  label: '파인튜닝 최적  ★',  glow: '0 0 10px #00ff88' },
 }
 
-export default function BottomBar({ isDebating, messageCount }) {
-  const { totalDebates, todayDebates, readiness, progressPct, nextMilestone, loaded } = useDebateStats()
-  const cfg = READINESS_CONFIG[readiness]
+export default function BottomBar({ isDebating, messageCount, stats }) {
+  const {
+    totalDebates = 0,
+    todayDebates = 0,
+    readiness = 'collecting',
+    progressPct = 0,
+    nextMilestone = 50,
+    loaded = false,
+  } = stats || {}
+
+  const cfg = READINESS_CONFIG[readiness] || READINESS_CONFIG.collecting
 
   return (
     <div

@@ -13,8 +13,9 @@ const cleanMarkdown = (text) =>
 
 
 export default function RightPanel({ selectedGod }) {
-  const { messages, topic, isDiscussing, consensus, currentRound, rounds, statusText } = useDiscussionStore()
+  const { messages, topic, isDiscussing, consensus, currentRound, totalRounds, statusText } = useDiscussionStore()
   const [activeTab, setActiveTab] = useState('log') // 'log' | 'consensus'
+  const displayTotalRounds = Math.max(totalRounds || 0, currentRound || 0, 1)
 
   // 합의안 완료되면 자동으로 탭 전환
   const showConsensusTab = !!consensus
@@ -52,7 +53,7 @@ export default function RightPanel({ selectedGod }) {
         {/* 라운드 표시 */}
         {(isDiscussing || consensus) && (
           <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.4)' }}>
-            ROUND {currentRound}/{rounds}
+            ROUND {currentRound}/{displayTotalRounds}
           </span>
         )}
       </div>

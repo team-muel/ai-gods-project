@@ -133,6 +133,8 @@ export default defineConfig(({ mode }) => {
   const vaultPath   = env.OBSIDIAN_VAULT_PATH || ''
   const supabaseUrl = env.VITE_SUPABASE_URL
   const supabaseKey = env.VITE_SUPABASE_ANON_KEY
+  const groqModel = 'llama-3.1-8b-instant'
+  const ollamaBaseUrl = (env.VITE_OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '')
 
   return {
     plugins: [
@@ -168,33 +170,91 @@ export default defineConfig(({ mode }) => {
         },
       },
 
-      // ── Groq 프록시 미들웨어 (로컬 CORS 해결) ──
+      // ── Chat 프록시 미들웨어 (Groq + 로컬 Ollama direct) ──
       {
         name: 'groq-proxy',
         configureServer(server) {
           server.middlewares.use('/api/chat', (req, res) => {
             if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
-            const groqKey = serperKey ? env.VITE_GROQ_API_KEY : ''
             let body = ''
             req.on('data', chunk => (body += chunk))
             req.on('end', async () => {
+              let payload
               try {
-                const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${env.VITE_GROQ_API_KEY}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body,
-                })
-                const data = await upstream.json()
-                res.setHeader('Content-Type', 'application/json')
-                res.statusCode = upstream.status
-                res.end(JSON.stringify(data))
+                payload = body ? JSON.parse(body) : {}
               } catch (e) {
-                res.statusCode = 500
-                res.end(JSON.stringify({ error: e.message }))
+                res.statusCode = 400
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'JSON 본문 파싱 실패' }))
+                return
               }
+
+              const provider = payload?.provider === 'ollama' ? 'ollama' : 'groq'
+              delete payload.provider
+
+              if (provider === 'ollama') {
+                try {
+                  const upstream = await fetch(`${ollamaBaseUrl}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      ...payload,
+                      model: payload.model || 'llama3.1:8b',
+                      stream: payload.stream ?? false,
+                    }),
+                  })
+                  const data = await upstream.json().catch(() => ({}))
+                  res.setHeader('Content-Type', 'application/json')
+                  res.statusCode = upstream.status
+                  res.end(JSON.stringify(data))
+                } catch (e) {
+                  res.statusCode = 500
+                  res.setHeader('Content-Type', 'application/json')
+                  res.end(JSON.stringify({ error: `로컬 Ollama 연결 실패: ${e.message}` }))
+                }
+                return
+              }
+
+              payload.model = groqModel
+              const MAX_RETRIES = 6
+              const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+              const serializedBody = JSON.stringify(payload)
+              for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                  const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${env.VITE_GROQ_API_KEY}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: serializedBody,
+                  })
+                  const data = await upstream.json()
+
+                  if (upstream.status === 429) {
+                    const msg = data?.error?.message || ''
+                    const match = msg.match(/try again in ([\d.]+)s/)
+                    const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 15000
+                    console.log(`[Groq 429] ${Math.round(waitMs/1000)}초 대기 후 재시도... (${attempt + 1}/${MAX_RETRIES})`)
+                    await sleep(waitMs)
+                    continue
+                  }
+
+                  res.setHeader('Content-Type', 'application/json')
+                  res.statusCode = upstream.status
+                  res.end(JSON.stringify(data))
+                  return
+                } catch (e) {
+                  if (attempt === MAX_RETRIES - 1) {
+                    res.statusCode = 500
+                    res.end(JSON.stringify({ error: e.message }))
+                    return
+                  }
+                  await sleep(3000)
+                }
+              }
+              res.statusCode = 429
+              res.end(JSON.stringify({ error: '최대 재시도 횟수 초과. 잠시 후 다시 시도하세요.' }))
             })
           })
         },

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Stars } from '@react-three/drei'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
@@ -15,12 +15,19 @@ import { useDebateStats } from './hooks/useDebateStats'
 
 export default function App() {
   const [selectedGod, setSelectedGod] = useState(null)
-  const { isDiscussing, topic, messages, activeGodId } = useDiscussionStore()
-  const { refresh: refreshStats } = useDebateStats()
+  const { isDiscussing, topic, messages, consensus } = useDiscussionStore()
+  const debateStats = useDebateStats()
+  const { refresh: refreshStats, ...bottomBarStats } = debateStats
 
   const handleGodClick = (god) => {
     setSelectedGod(selectedGod?.id === god.id ? null : god)
   }
+
+  useEffect(() => {
+    if (!isDiscussing && consensus) {
+      refreshStats()
+    }
+  }, [consensus, isDiscussing, refreshStats])
 
   return (
     <div className="relative w-full h-full bg-black">
@@ -114,7 +121,7 @@ export default function App() {
 
         {/* 하단 통계 바 */}
         <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
-          <BottomBar isDebating={isDiscussing} messageCount={messages.length} onDebateComplete={refreshStats} />
+          <BottomBar isDebating={isDiscussing} messageCount={messages.length} stats={bottomBarStats} />
         </div>
       </div>
     </div>

@@ -2,17 +2,17 @@
  * GET /api/obsidian/search?godId=cso&q=주제
  * Vercel 환경: Supabase god_memories에서 해당 신의 과거 기억 검색
  */
-import { createClient } from '@supabase/supabase-js'
+import { ensureRequestAllowed, sendJson } from '../_requestGuard.js'
+import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 
 export default async function handler(req, res) {
+  if (!ensureRequestAllowed(req, res, { methods: ['GET'] })) return
+
   const { godId, q = '' } = req.query
 
-  if (!godId) return res.status(400).json({ notes: [] })
+  if (!godId) return sendJson(res, 400, { notes: [] })
 
-  const supabase = createClient(
-    process.env.VITE_SUPABASE_URL,
-    process.env.VITE_SUPABASE_ANON_KEY
-  )
+  const supabase = getSupabaseServerClient()
 
   const { data, error } = await supabase
     .from('god_memories')
@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     .limit(5)
 
   if (error || !data) {
-    return res.status(200).json({ notes: [] })
+    return sendJson(res, 200, { notes: [] })
   }
 
   // 키워드 필터링 (있을 경우)
@@ -39,5 +39,5 @@ export default async function handler(req, res) {
     snippet: m.my_opinion?.slice(0, 200) || '',
   }))
 
-  return res.status(200).json({ notes })
+  return sendJson(res, 200, { notes })
 }

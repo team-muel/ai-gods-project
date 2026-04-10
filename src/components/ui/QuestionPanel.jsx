@@ -7,10 +7,12 @@ export default function QuestionPanel() {
   const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState('');
 
-  const { isDiscussing, startDiscussion, currentRound, statusText, clearDiscussion, consensus } = useDiscussionStore();
+  const { isDiscussing, startDiscussion, currentRound, totalRounds, statusText, clearDiscussion, consensus } = useDiscussionStore();
 
   const isYT = isYoutubeUrl(input)
   const isLoading = isDiscussing || isFetchingTranscript
+  const displayTotalRounds = Math.max(totalRounds || 0, 1)
+  const progressWidth = Math.min(100, Math.max(0, (currentRound / displayTotalRounds) * 100))
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -139,11 +141,11 @@ export default function QuestionPanel() {
                 <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.6)' }}>
                   ROUND {currentRound}
                 </span>
-                <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.3)' }}>/ MAX 4</span>
+                <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.3)' }}>/ MAX {displayTotalRounds}</span>
               </div>
               <div style={{ height: '2px', background: 'rgba(100,200,255,0.1)', borderRadius: '1px', marginBottom: '8px' }}>
                 <div style={{
-                  height: '100%', width: `${(currentRound / 4) * 100}%`,
+                  height: '100%', width: `${progressWidth}%`,
                   background: 'linear-gradient(90deg, #00aaff, #00ff88)',
                   borderRadius: '1px', transition: 'width 0.5s ease',
                 }} />

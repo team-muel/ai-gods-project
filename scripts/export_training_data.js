@@ -30,7 +30,7 @@ const GOD_SYSTEM_PROMPTS = {
   cto: `당신은 AI 기업의 최고 기술 책임자(CTO)입니다. 이름은 Nexus입니다. 기술 아키텍처, 인프라, 기술적 실현 가능성 관점에서 분석합니다. 반드시 한국어로 답변하세요.`,
 }
 
-const outputDir = path.join(__dirname, '../training_data')
+const outputDir = path.join(__dirname, '../training-data')
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir)
 
 const main = async () => {
@@ -80,7 +80,7 @@ const main = async () => {
       // Round 1: 초기 의견
       if (msg.round === 1) {
         samples.push({
-          messages: [
+          conversations: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `주제: ${topic}\n\n당신의 전문 분야 관점에서 초기 의견을 제시하세요.` },
             { role: 'assistant', content: msg.content },
@@ -89,7 +89,7 @@ const main = async () => {
       } else {
         // Round 2+: 토론 반응
         samples.push({
-          messages: [
+          conversations: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `주제: ${topic}\n\n다른 임원들의 의견에 대해 동의/반박/보완하며 토론하세요.` },
             { role: 'assistant', content: msg.content },
@@ -100,7 +100,7 @@ const main = async () => {
       // 최종 합의 있으면 합의 학습 샘플 추가
       if (consensus && msg.round >= 2) {
         samples.push({
-          messages: [
+          conversations: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `주제: ${topic}\n\n이 토론에서 도출된 최종 합의안을 참고하여 당신의 입장을 정리하세요:\n\n${consensus.slice(0, 300)}` },
             { role: 'assistant', content: msg.content },

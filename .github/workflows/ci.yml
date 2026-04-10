@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - 'debates/**'
+      - 'outputs/**'
+      - 'training-data/**'
+      - 'dpo-data/**'
+      - '.obsidian/**'
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 빌드 검증
+        run: npm run build

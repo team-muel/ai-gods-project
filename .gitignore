@@ -22,7 +22,8 @@ yarn-error.log*
 pnpm-debug.log*
 
 # 에디터
-.vscode/
+.vscode/*
+!.vscode/mcp.json
 .idea/
 *.suo
 *.ntvs*
@@ -43,6 +44,13 @@ vite.config.js.timestamp-*
 finetune_env/
 finetuned_models/
 training_data/
+training-data/
+dpo-data/
+models/lora/
+models/dpo/
 
 # Obsidian (로컬 vault)
 .obsidian/
+
+# 학습 산출물
+outputs/

@@ -6,37 +6,15 @@
  *   - 21일 반감기 relevance_score
  */
 
-import { supabase } from '../lib/supabase'
+import { supabase } from '../lib/supabase.js'
+import { calcDecayScore, classifyRelationship, keywordSimilarity } from '../lib/memoryScoring.js'
+import { postJson, requestJson } from './apiClient.js'
 
-const HALF_LIFE_DAYS = 21
+const IS_DEV = import.meta.env.DEV === true
 
-// ── 유틸 ──────────────────────────────────────────────────
+// ── 토론 저장 (로컬 개발용 직접 저장) ─────────────────────
 
-// 반감기 기반 점수 계산
-const calcDecayScore = (createdAt) => {
-  const days = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)
-  return Math.pow(0.5, days / HALF_LIFE_DAYS)
-}
-
-// 키워드 유사도 (벡터 임베딩 전까지 사용)
-const keywordSimilarity = (textA, textB) => {
-  const wordsA = textA.toLowerCase().split(/\s+/).filter(w => w.length > 1)
-  const wordsB = textB.toLowerCase().split(/\s+/).filter(w => w.length > 1)
-  const overlap = wordsA.filter(w => wordsB.includes(w)).length
-  return overlap / Math.max(wordsA.length, 1)
-}
-
-// Muel memoryEvolutionService: 관계 타입 판단
-const classifyRelationship = (newTopic, existingTopic, similarityScore) => {
-  if (similarityScore > 0.7) return 'supersedes'
-  if (similarityScore > 0.4) return 'derived_from'
-  if (similarityScore > 0.2) return 'related'
-  return null
-}
-
-// ── 토론 저장 ─────────────────────────────────────────────
-
-export const saveDebate = async ({ topic, isYoutube, totalRounds, consensus }) => {
+const saveDebateDirect = async ({ topic, isYoutube, totalRounds, consensus }) => {
   const { data, error } = await supabase
     .from('debates')
     .insert({ topic, is_youtube: isYoutube, total_rounds: totalRounds, consensus })
@@ -47,7 +25,7 @@ export const saveDebate = async ({ topic, isYoutube, totalRounds, consensus }) =
   return data.id
 }
 
-export const saveDebateMessages = async (debateId, messages) => {
+const saveDebateMessagesDirect = async (debateId, messages) => {
   const rows = messages.map(m => ({
     debate_id: debateId,
     god_id:    m.godId,
@@ -60,9 +38,7 @@ export const saveDebateMessages = async (debateId, messages) => {
   if (error) console.error('메시지 저장 오류:', error)
 }
 
-// ── 메모리 저장 (신별) ────────────────────────────────────
-
-export const saveDebateMemory = async (godId, { topic, content, consensus, debateId }) => {
+const saveDebateMemoryDirect = async (godId, { topic, content, consensus, debateId }) => {
   // 1. 새 메모리 저장
   const { data: newMem, error } = await supabase
     .from('god_memories')
@@ -134,9 +110,60 @@ export const saveDebateMemory = async (godId, { topic, content, consensus, debat
 
 }
 
+export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, consensus, messages }) => {
+  if (!Array.isArray(messages) || messages.length === 0) return null
+
+  if (!IS_DEV) {
+    try {
+      const data = await postJson('/api/debates/complete', {
+        topic,
+        isYoutube,
+        totalRounds,
+        consensus,
+        messages,
+      })
+      return data?.debateId || null
+    } catch (error) {
+      console.error('토론 저장 오류:', error)
+      return null
+    }
+  }
+
+  const debateId = await saveDebateDirect({ topic, isYoutube, totalRounds, consensus })
+  if (!debateId) return null
+
+  await saveDebateMessagesDirect(debateId, messages)
+
+  const latestMessageByGod = new Map()
+  for (const message of messages) {
+    latestMessageByGod.set(message.godId, message)
+  }
+
+  for (const [godId, message] of latestMessageByGod.entries()) {
+    await saveDebateMemoryDirect(godId, {
+      topic,
+      content: message.content,
+      consensus,
+      debateId,
+    })
+  }
+
+  return debateId
+}
+
 // ── 관련 메모리 조회 ──────────────────────────────────────
 
 export const getRelevantMemories = async (godId, topic, count = 3) => {
+  if (!IS_DEV) {
+    try {
+      const params = new URLSearchParams({ godId, topic, count: String(count) })
+      const data = await requestJson(`/api/memories/relevant?${params.toString()}`)
+      return data?.memories || []
+    } catch {
+      return []
+    }
+  }
+
   const { data, error } = await supabase
     .from('god_memories')
     .select('id, topic, my_opinion, relevance_score, created_at')
@@ -174,6 +201,8 @@ export const memoriesToContext = (memories) => {
 // ── 통계 조회 ─────────────────────────────────────────────
 
 export const getGodStats = async (godId) => {
+  if (!IS_DEV) return null
+
   const { data } = await supabase
     .from('god_stats')
     .select('*')
@@ -183,6 +212,8 @@ export const getGodStats = async (godId) => {
 }
 
 export const getAllGodsStats = async () => {
+  if (!IS_DEV) return []
+
   const { data } = await supabase
     .from('god_stats')
     .select('*')
@@ -192,5 +223,6 @@ export const getAllGodsStats = async () => {
 
 // ── 반감기 갱신 (앱 시작 시 호출) ───────────────────────
 export const refreshRelevanceScores = async () => {
+  if (!IS_DEV) return
   await supabase.rpc('update_memory_relevance')
 }
