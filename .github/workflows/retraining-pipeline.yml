@@ -1,0 +1,144 @@
+name: AI Gods 재학습 파이프라인
+
+on:
+  workflow_run:
+    workflows: ['AI Gods 자동 토론']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force_prepare:
+        description: 임계치와 무관하게 dataset export 수행
+        required: false
+        type: boolean
+        default: false
+      run_training:
+        description: self-hosted GPU runner에서 실제 SFT/DPO 학습 수행
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '30 14 * * *'
+
+concurrency:
+  group: ai-gods-retraining-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  readiness:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      ready_for_export: ${{ steps.readiness.outputs.ready_for_export }}
+      ready_for_sft: ${{ steps.readiness.outputs.ready_for_sft }}
+      ready_for_dpo: ${{ steps.readiness.outputs.ready_for_dpo }}
+      recommended_for_training: ${{ steps.readiness.outputs.recommended_for_training }}
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 학습 준비도 평가
+        id: readiness
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/check-training-readiness.mjs --out outputs/training-readiness.json
+
+      - name: 준비도 리포트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-readiness
+          path: outputs/training-readiness.json
+          if-no-files-found: error
+
+  prepare-datasets:
+    needs: readiness
+    if: needs.readiness.outputs.ready_for_export == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_prepare)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 데이터 export 의존성 설치
+        run: python -m pip install -r requirements-data.txt
+
+      - name: SFT 데이터 export
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/export-training-data.py
+
+      - name: DPO 데이터 export
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/generate_dpo_data.py
+
+      - name: 데이터셋 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-datasets
+          path: |
+            training-data/**
+            dpo-data/**
+            outputs/training-readiness.json
+          if-no-files-found: error
+
+  train-self-hosted:
+    needs: [readiness, prepare-datasets]
+    if: github.event_name == 'workflow_dispatch' && inputs.run_training && needs.prepare-datasets.result == 'success'
+    runs-on: self-hosted
+    timeout-minutes: 1440
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 학습 데이터셋 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: training-datasets
+          path: .
+
+      - name: 학습 의존성 설치
+        run: python -m pip install -r requirements-training.txt
+
+      - name: SFT 파인튜닝
+        run: python scripts/finetune-god.py --god all
+
+      - name: DPO 강화학습
+        if: needs.readiness.outputs.ready_for_dpo == 'true'
+        run: python scripts/train_dpo.py --god all
+
+      - name: 학습 결과 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model-adapters
+          path: |
+            models/lora/**
+            models/dpo/**
+          if-no-files-found: warn

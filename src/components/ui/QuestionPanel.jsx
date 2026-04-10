@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useDiscussionStore } from '../../store/discussionStore';
 import { isYoutubeUrl, extractVideoId, fetchTranscript } from '../../services/youtubeService';
 
-export default function QuestionPanel() {
+export default function QuestionPanel({ onOpenDashboard }) {
   const [input, setInput] = useState('');
   const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState('');
@@ -129,6 +129,21 @@ export default function QuestionPanel() {
             : isDiscussing ? '🌌 토론 진행 중...'
             : isYT ? '▶ YouTube 영상 토론 시작'
             : '🚀 토론 시작'}
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenDashboard}
+          style={{
+            width: '100%', padding: '10px', marginTop: '8px',
+            background: 'linear-gradient(135deg, rgba(0, 200, 180, 0.2) 0%, rgba(0, 110, 255, 0.18) 100%)',
+            border: '1px solid rgba(120, 230, 255, 0.22)', borderRadius: '6px', color: '#bff8ff',
+            fontSize: '12px', fontWeight: 'bold',
+            cursor: 'pointer',
+            transition: 'all 0.3s',
+          }}
+        >
+          📡 운영 대시보드로 이동
         </button>
       </form>
 

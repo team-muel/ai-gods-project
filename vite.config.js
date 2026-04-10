@@ -6,6 +6,7 @@ import path from 'path'
 import chokidar from 'chokidar'
 import matter from 'gray-matter'
 import { createClient } from '@supabase/supabase-js'
+import { buildOperationsDashboard, DEFAULT_DASHBOARD_PAGE_SIZE } from './api/ops/_operationsDashboard.js'
 
 // ── Obsidian 유틸 ───────────────────────────────────────────
 const slugify = (text) =>
@@ -165,6 +166,35 @@ export default defineConfig(({ mode }) => {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ error: `트랜스크립트를 가져올 수 없습니다: ${e.message}` }))
+            }
+          })
+        },
+      },
+
+      // ── 운영 대시보드 API (로컬 개발용) ───────────────────────
+      {
+        name: 'operations-dashboard-api',
+        configureServer(server) {
+          server.middlewares.use('/api/ops/dashboard', async (req, res) => {
+            if (req.method !== 'GET') {
+              res.statusCode = 405
+              res.setHeader('Allow', 'GET')
+              res.end()
+              return
+            }
+
+            try {
+              const urlObj = new URL(req.url || '/', 'http://localhost')
+              const page = Math.max(1, Number.parseInt(urlObj.searchParams.get('page') || '1', 10) || 1)
+              const pageSize = Math.max(6, Math.min(24, Number.parseInt(urlObj.searchParams.get('pageSize') || String(DEFAULT_DASHBOARD_PAGE_SIZE), 10) || DEFAULT_DASHBOARD_PAGE_SIZE))
+              const payload = await buildOperationsDashboard({ page, pageSize, env })
+              res.statusCode = 200
+              res.setHeader('Content-Type', 'application/json; charset=utf-8')
+              res.end(JSON.stringify(payload))
+            } catch (error) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json; charset=utf-8')
+              res.end(JSON.stringify({ error: error.message || '운영 대시보드 조회에 실패했습니다.' }))
             }
           })
         },

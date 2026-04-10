@@ -9,10 +9,8 @@ on:
       - 'dpo-data/**'
       - '.obsidian/**'
   schedule:
-    # 하루 8회 (UTC 기준 → 한국시간 +9시간)
-    # 한국시간: 9시, 11시, 13시, 15시, 17시, 19시, 21시, 23시
     - cron: '0 0,2,4,6,8,10,12,14 * * *'
-  workflow_dispatch:  # 수동 실행 버튼
+  workflow_dispatch:
 
 concurrency:
   group: ai-gods-auto-debate-${{ github.ref }}
@@ -36,9 +34,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js node-fetch
+        run: npm ci
 
       - name: 자동 토론 실행
         env:
@@ -55,35 +54,3 @@ jobs:
           git add debates/
           git diff --cached --quiet || git commit -m "auto: 토론 결과 저장 $(date +'%Y-%m-%d %H:%M')"
           git push
-*** Add File: c:\Users\user\Desktop\ai-god\ai-gods-project\.github\workflows\ci.yml
-name: CI
-
-on:
-  push:
-    paths-ignore:
-      - 'debates/**'
-      - 'outputs/**'
-      - 'training-data/**'
-      - 'dpo-data/**'
-      - '.obsidian/**'
-  pull_request:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 저장소 체크아웃
-        uses: actions/checkout@v4
-
-      - name: Node.js 설정
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: 의존성 설치
-        run: npm ci
-
-      - name: 빌드 검증
-        run: npm run build

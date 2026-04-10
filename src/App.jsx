@@ -7,6 +7,7 @@ import ConnectionLines from './components/ConnectionLines'
 import OrbitalRings from './components/OrbitalRings'
 import CenterHologram from './components/CenterHologram'
 import QuestionPanel from './components/ui/QuestionPanel'
+import OperationsDashboard from './components/ui/OperationsDashboard'
 import RightPanel from './components/ui/RightPanel'
 import BottomBar from './components/ui/BottomBar'
 import { AI_GODS } from './config/aiGods'
@@ -15,9 +16,21 @@ import { useDebateStats } from './hooks/useDebateStats'
 
 export default function App() {
   const [selectedGod, setSelectedGod] = useState(null)
+  const [view, setView] = useState(() => (typeof window !== 'undefined' && window.location.hash === '#dashboard' ? 'dashboard' : 'council'))
   const { isDiscussing, topic, messages, consensus } = useDiscussionStore()
   const debateStats = useDebateStats()
   const { refresh: refreshStats, ...bottomBarStats } = debateStats
+
+  useEffect(() => {
+    const syncViewFromHash = () => {
+      setView(window.location.hash === '#dashboard' ? 'dashboard' : 'council')
+    }
+
+    window.addEventListener('hashchange', syncViewFromHash)
+    return () => {
+      window.removeEventListener('hashchange', syncViewFromHash)
+    }
+  }, [])
 
   const handleGodClick = (god) => {
     setSelectedGod(selectedGod?.id === god.id ? null : god)
@@ -28,6 +41,16 @@ export default function App() {
       refreshStats()
     }
   }, [consensus, isDiscussing, refreshStats])
+
+  const openDashboard = () => {
+    window.location.hash = 'dashboard'
+    setView('dashboard')
+  }
+
+  const closeDashboard = () => {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+    setView('council')
+  }
 
   return (
     <div className="relative w-full h-full bg-black">
@@ -101,28 +124,34 @@ export default function App() {
           <div className="text-center">
             <h1 className="font-orbitron text-2xl font-black tracking-widest text-white text-glow"
                 style={{ textShadow: '0 0 20px rgba(100,200,255,0.8), 0 0 40px rgba(100,200,255,0.4)' }}>
-              AI GODS
+              {view === 'dashboard' ? 'AI GODS OPS' : 'AI GODS'}
             </h1>
             <p className="font-rajdhani text-xs tracking-[0.3em] text-blue-300 opacity-70 mt-1">
-              8 DIVINE MINDS · COSMIC COUNCIL
+              {view === 'dashboard' ? 'AUTOMATION · DEPLOYMENTS · DEBATE ARCHIVE' : '8 DIVINE MINDS · COSMIC COUNCIL'}
             </p>
           </div>
         </div>
 
-        {/* 좌측 패널 - 질문 입력 (QuestionPanel은 absolute 포지션 자체 포함) */}
-        <div className="pointer-events-auto">
-          <QuestionPanel />
-        </div>
+        {view === 'dashboard' ? (
+          <OperationsDashboard onClose={closeDashboard} />
+        ) : (
+          <>
+            {/* 좌측 패널 - 질문 입력 (QuestionPanel은 absolute 포지션 자체 포함) */}
+            <div className="pointer-events-auto">
+              <QuestionPanel onOpenDashboard={openDashboard} />
+            </div>
 
-        {/* 우측 패널 - 실시간 로그 */}
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-auto">
-          <RightPanel selectedGod={selectedGod} />
-        </div>
+            {/* 우측 패널 - 실시간 로그 */}
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-auto">
+              <RightPanel selectedGod={selectedGod} />
+            </div>
 
-        {/* 하단 통계 바 */}
-        <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
-          <BottomBar isDebating={isDiscussing} messageCount={messages.length} stats={bottomBarStats} />
-        </div>
+            {/* 하단 통계 바 */}
+            <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
+              <BottomBar isDebating={isDiscussing} messageCount={messages.length} stats={bottomBarStats} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
