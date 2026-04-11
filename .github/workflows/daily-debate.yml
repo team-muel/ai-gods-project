@@ -8,6 +8,13 @@ on:
       - 'training-data/**'
       - 'dpo-data/**'
       - '.obsidian/**'
+      - 'README.md'
+      - '.env.example'
+      - 'docs/**'
+      - '.github/workflows/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/check-request-guard.mjs'
   schedule:
     - cron: '0 0,2,4,6,8,10,12,14 * * *'
   workflow_dispatch:
