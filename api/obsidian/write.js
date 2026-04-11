@@ -3,11 +3,12 @@
  * Vercel 환경: 토론 결과를 Supabase god_memories에 저장
  * (memoryService.saveDebateMemory가 이미 저장하므로, 중복 방지를 위해 upsert 사용)
  */
-import { ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
+import { enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 
 export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['POST'] })) return
+  if (!enforceRateLimit(req, res, { bucket: 'obsidian-write', limit: 20, windowMs: 10 * 60 * 1000 })) return
 
   let body
   try {

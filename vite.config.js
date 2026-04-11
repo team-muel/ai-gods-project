@@ -132,10 +132,15 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   const vaultPath   = env.OBSIDIAN_VAULT_PATH || ''
-  const supabaseUrl = env.VITE_SUPABASE_URL
-  const supabaseKey = env.VITE_SUPABASE_ANON_KEY
+  const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL
+  const supabaseKey = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY
+  const groqApiKey = env.GROQ_API_KEY || env.VITE_GROQ_API_KEY || ''
   const groqModel = 'llama-3.1-8b-instant'
   const ollamaBaseUrl = (env.VITE_OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '')
+
+  if (!env.GROQ_API_KEY && env.VITE_GROQ_API_KEY) {
+    console.warn('[Security] VITE_GROQ_API_KEY는 deprecated 되었습니다. 브라우저 노출 방지를 위해 GROQ_API_KEY로 옮기세요.')
+  }
 
   return {
     plugins: [
@@ -246,6 +251,13 @@ export default defineConfig(({ mode }) => {
               }
 
               payload.model = groqModel
+              if (!groqApiKey) {
+                res.statusCode = 500
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: 'GROQ_API_KEY 미설정' }))
+                return
+              }
+
               const MAX_RETRIES = 6
               const sleep = (ms) => new Promise(r => setTimeout(r, ms))
               const serializedBody = JSON.stringify(payload)
@@ -254,7 +266,7 @@ export default defineConfig(({ mode }) => {
                   const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: {
-                      'Authorization': `Bearer ${env.VITE_GROQ_API_KEY}`,
+                      'Authorization': `Bearer ${groqApiKey}`,
                       'Content-Type': 'application/json',
                     },
                     body: serializedBody,

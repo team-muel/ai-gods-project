@@ -29,3 +29,45 @@ jobs:
 
       - name: 빌드 검증
         run: npm run build
+
+  supabase-security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Supabase 감사용 secret 확인
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || { echo "SUPABASE_URL secret is required"; exit 1; }
+          test -n "$SUPABASE_ANON_KEY" || { echo "SUPABASE_ANON_KEY secret is required"; exit 1; }
+
+      - name: Live Supabase 접근 감사
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: npm run audit:supabase-access
+
+      - name: 익명 읽기 노출 차단 확인
+        run: |
+          node -e "const fs=require('fs'); const report=JSON.parse(fs.readFileSync('outputs/supabase-access-audit.json','utf8')); if(!report?.verdict?.anonTableReadSafe){ console.error('anonTableReadSafe=false'); console.error('Readable tables:', (report?.anon?.readableTables||[]).join(', ')); process.exit(1) }"
+
+      - name: 감사 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-access-audit
+          path: outputs/supabase-access-audit.json
+          if-no-files-found: error

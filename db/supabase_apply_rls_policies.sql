@@ -4,65 +4,103 @@
 
 BEGIN;
 
-DROP POLICY IF EXISTS allow_all_anon ON public.debates;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.debates;
-DROP POLICY IF EXISTS allow_all_anon ON public.debate_messages;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_messages;
-DROP POLICY IF EXISTS allow_all_anon ON public.god_memories;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.god_memories;
-DROP POLICY IF EXISTS allow_all_anon ON public.memory_links;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.memory_links;
-DROP POLICY IF EXISTS allow_all_anon ON public.neuro_logs;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.neuro_logs;
-DROP POLICY IF EXISTS allow_all_anon ON public.arousal_logs;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.arousal_logs;
-DROP POLICY IF EXISTS allow_all_anon ON public.immune_logs;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.immune_logs;
-DROP POLICY IF EXISTS allow_all_anon ON public.reward_events;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.reward_events;
-DROP POLICY IF EXISTS allow_all_anon ON public.preference_pairs;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.preference_pairs;
-DROP POLICY IF EXISTS allow_all_anon ON public.debate_archives;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_archives;
-DROP POLICY IF EXISTS allow_all_anon ON public.dataset_versions;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.dataset_versions;
-DROP POLICY IF EXISTS allow_all_anon ON public.training_runs;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.training_runs;
-DROP POLICY IF EXISTS allow_all_anon ON public.model_versions;
-DROP POLICY IF EXISTS allow_all_authenticated ON public.model_versions;
-DROP POLICY IF EXISTS allow_insert_neuro_authenticated ON public.neuro_logs;
-DROP POLICY IF EXISTS allow_select_neuro_authenticated ON public.neuro_logs;
-DROP POLICY IF EXISTS allow_insert_arousal_authenticated ON public.arousal_logs;
-DROP POLICY IF EXISTS allow_select_arousal_authenticated ON public.arousal_logs;
+DO $$
+BEGIN
+	IF to_regclass('public.debates') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debates';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debates';
+		EXECUTE 'ALTER TABLE public.debates ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debates FROM anon, authenticated';
+	END IF;
 
--- Keep RLS enabled with no direct client policies.
-ALTER TABLE IF EXISTS public.neuro_logs  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.arousal_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.debates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.debate_messages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.god_memories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.memory_links ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.immune_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.reward_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.preference_pairs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.debate_archives ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.dataset_versions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.training_runs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.model_versions ENABLE ROW LEVEL SECURITY;
+	IF to_regclass('public.debate_messages') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_messages';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_messages';
+		EXECUTE 'ALTER TABLE public.debate_messages ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debate_messages FROM anon, authenticated';
+	END IF;
 
-REVOKE ALL ON TABLE public.debates FROM anon, authenticated;
-REVOKE ALL ON TABLE public.debate_messages FROM anon, authenticated;
-REVOKE ALL ON TABLE public.god_memories FROM anon, authenticated;
-REVOKE ALL ON TABLE public.memory_links FROM anon, authenticated;
-REVOKE ALL ON TABLE public.neuro_logs FROM anon, authenticated;
-REVOKE ALL ON TABLE public.arousal_logs FROM anon, authenticated;
-REVOKE ALL ON TABLE public.immune_logs FROM anon, authenticated;
-REVOKE ALL ON TABLE public.reward_events FROM anon, authenticated;
-REVOKE ALL ON TABLE public.preference_pairs FROM anon, authenticated;
-REVOKE ALL ON TABLE public.debate_archives FROM anon, authenticated;
-REVOKE ALL ON TABLE public.dataset_versions FROM anon, authenticated;
-REVOKE ALL ON TABLE public.training_runs FROM anon, authenticated;
-REVOKE ALL ON TABLE public.model_versions FROM anon, authenticated;
+	IF to_regclass('public.god_memories') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.god_memories';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.god_memories';
+		EXECUTE 'ALTER TABLE public.god_memories ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.god_memories FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.memory_links') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.memory_links';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.memory_links';
+		EXECUTE 'ALTER TABLE public.memory_links ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.memory_links FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.neuro_logs') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.neuro_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.neuro_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_insert_neuro_authenticated ON public.neuro_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_select_neuro_authenticated ON public.neuro_logs';
+		EXECUTE 'ALTER TABLE public.neuro_logs ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.neuro_logs FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.arousal_logs') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.arousal_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.arousal_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_insert_arousal_authenticated ON public.arousal_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_select_arousal_authenticated ON public.arousal_logs';
+		EXECUTE 'ALTER TABLE public.arousal_logs ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.arousal_logs FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.immune_logs') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.immune_logs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.immune_logs';
+		EXECUTE 'ALTER TABLE public.immune_logs ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.immune_logs FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.reward_events') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.reward_events';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.reward_events';
+		EXECUTE 'ALTER TABLE public.reward_events ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.reward_events FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.preference_pairs') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.preference_pairs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.preference_pairs';
+		EXECUTE 'ALTER TABLE public.preference_pairs ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.preference_pairs FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.debate_archives') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_archives';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_archives';
+		EXECUTE 'ALTER TABLE public.debate_archives ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debate_archives FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.dataset_versions') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.dataset_versions';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.dataset_versions';
+		EXECUTE 'ALTER TABLE public.dataset_versions ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.dataset_versions FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.training_runs') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.training_runs';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.training_runs';
+		EXECUTE 'ALTER TABLE public.training_runs ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.training_runs FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.model_versions') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.model_versions';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.model_versions';
+		EXECUTE 'ALTER TABLE public.model_versions ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.model_versions FROM anon, authenticated';
+	END IF;
+END $$;
 
 COMMIT;
 

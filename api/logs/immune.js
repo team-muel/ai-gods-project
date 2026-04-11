@@ -1,8 +1,9 @@
-import { clampNumber, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
+import { clampNumber, enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 
 export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['POST'] })) return
+  if (!enforceRateLimit(req, res, { bucket: 'immune-logs', limit: 180, windowMs: 10 * 60 * 1000 })) return
 
   let body
   try {
@@ -11,7 +12,7 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: error.message })
   }
 
-  const agentId = String(body?.agentId || '').trim()
+  const agentId = String(body?.agentId || '').trim().slice(0, 64)
   if (!agentId) {
     return sendJson(res, 400, { error: 'agentId가 필요합니다.' })
   }

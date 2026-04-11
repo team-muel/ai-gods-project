@@ -1,8 +1,9 @@
-import { ensureRequestAllowed, sendJson } from '../_requestGuard.js'
+import { enforceRateLimit, ensureRequestAllowed, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 
 export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['GET'] })) return
+  if (!enforceRateLimit(req, res, { bucket: 'debate-stats', limit: 60, windowMs: 10 * 60 * 1000 })) return
 
   try {
     const supabase = getSupabaseServerClient()

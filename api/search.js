@@ -1,8 +1,14 @@
+import { clampInteger, enforceRateLimit, ensureRequestAllowed, sendJson } from './_requestGuard.js'
+
 // DuckDuckGo HTML 스크래핑 (Serper 대체 - 무료/무제한)
 export default async function handler(req, res) {
-  const { q, num = '5' } = req.query
+  if (!ensureRequestAllowed(req, res, { methods: ['GET'] })) return
+  if (!enforceRateLimit(req, res, { bucket: 'search', limit: 30, windowMs: 10 * 60 * 1000 })) return
 
-  if (!q) return res.status(400).json({ error: 'q 파라미터가 필요합니다.' })
+  const q = String(req.query?.q || '').trim().slice(0, 200)
+  const num = clampInteger(req.query?.num, 1, 10, 5)
+
+  if (!q) return sendJson(res, 400, { error: 'q 파라미터가 필요합니다.' })
 
   try {
     const query = encodeURIComponent(q)
@@ -36,10 +42,10 @@ export default async function handler(req, res) {
       if (title) results.push({ title, snippet, link })
     }
 
-    return res.status(200).json({ results, knowledgePanel: null, query: q })
+    return sendJson(res, 200, { results, knowledgePanel: null, query: q })
   } catch (e) {
     // DuckDuckGo 실패 시 빈 결과 반환 (토론은 계속 진행)
     console.error('[Search] 크롤링 실패:', e.message)
-    return res.status(200).json({ results: [], knowledgePanel: null, query: q })
+    return sendJson(res, 200, { results: [], knowledgePanel: null, query: q })
   }
 }

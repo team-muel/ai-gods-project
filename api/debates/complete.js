@@ -1,6 +1,6 @@
 import { classifyRelationship, keywordSimilarity } from '../../src/lib/memoryScoring.js'
 import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../../src/lib/rewardLearning.js'
-import { ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
+import { enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 import { isVirtualWarehouseUnavailableError, persistDebateArchive } from '../_virtualWarehouse.js'
 
@@ -79,6 +79,7 @@ const saveDebateMemory = async (supabase, godId, { topic, content, consensus, de
 
 export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['POST'] })) return
+  if (!enforceRateLimit(req, res, { bucket: 'debate-complete', limit: 12, windowMs: 10 * 60 * 1000 })) return
 
   let body
   try {
@@ -87,18 +88,19 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: error.message })
   }
 
-  const topic = String(body?.topic || '').trim()
-  const consensus = String(body?.consensus || '').trim()
+  const topic = String(body?.topic || '').trim().slice(0, 200)
+  const consensus = String(body?.consensus || '').trim().slice(0, 4000)
   const isYoutube = Boolean(body?.isYoutube)
   const totalRounds = Number.isFinite(Number(body?.totalRounds)) ? Math.max(1, Number(body.totalRounds)) : 1
   const spokenMessages = Array.isArray(body?.messages)
     ? body.messages
-        .filter((message) => message && !message.type && message.godId && typeof message.content === 'string')
+        .slice(-160)
+        .filter((message) => message && !message.type && message.godId && typeof message.content === 'string' && String(message.content).trim())
         .map((message) => ({
-          godId: String(message.godId),
-          god: String(message.god || message.godId),
+          godId: String(message.godId).slice(0, 64),
+          god: String(message.god || message.godId).slice(0, 80),
           round: Math.max(1, Number(message.round) || 1),
-          content: String(message.content),
+          content: String(message.content).slice(0, 4000),
           createdAt: typeof message.timestamp === 'string' && message.timestamp ? message.timestamp : new Date().toISOString(),
         }))
     : []
