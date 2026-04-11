@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_remote_training:
+        description: 외부 GPU 웹훅으로 원격 학습 잡 트리거
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: '30 14 * * *'
 
@@ -68,10 +73,21 @@ jobs:
     needs: readiness
     if: needs.readiness.outputs.ready_for_export == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_prepare)
     runs-on: ubuntu-latest
+    outputs:
+      snapshot_id: ${{ steps.prepare.outputs.snapshot_id }}
 
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
 
       - name: Python 설정
         uses: actions/setup-python@v5
@@ -81,17 +97,14 @@ jobs:
       - name: 데이터 export 의존성 설치
         run: python -m pip install -r requirements-data.txt
 
-      - name: SFT 데이터 export
+      - name: warehouse snapshot + 데이터셋 준비
+        id: prepare
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: python scripts/export-training-data.py
-
-      - name: DPO 데이터 export
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: python scripts/generate_dpo_data.py
+        run: npm run prepare:training-data
 
       - name: 데이터셋 아티팩트 업로드
         uses: actions/upload-artifact@v4
@@ -100,7 +113,9 @@ jobs:
           path: |
             training-data/**
             dpo-data/**
+            warehouse/latest-snapshot.json
             outputs/training-readiness.json
+            outputs/training-datasets-manifest.json
           if-no-files-found: error
 
   train-self-hosted:
@@ -134,6 +149,14 @@ jobs:
         if: needs.readiness.outputs.ready_for_dpo == 'true'
         run: python scripts/train_dpo.py --god all
 
+      - name: 모델 병합 및 레지스트리 등록
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          MODEL_RUN_ID: gh-${{ github.run_id }}
+          DATASET_SNAPSHOT_ID: ${{ needs.prepare-datasets.outputs.snapshot_id }}
+        run: python scripts/merge-and-register.py --god all
+
       - name: 학습 결과 아티팩트 업로드
         uses: actions/upload-artifact@v4
         with:
@@ -141,4 +164,48 @@ jobs:
           path: |
             models/lora/**
             models/dpo/**
+          if-no-files-found: warn
+
+  train-remote-cloud:
+    needs: [readiness, prepare-datasets]
+    if: needs.prepare-datasets.result == 'success' && (needs.readiness.outputs.recommended_for_training == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_remote_training))
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 데이터셋 아티팩트 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: training-datasets
+          path: .
+
+      - name: 원격 GPU 학습 트리거
+        id: remote_train
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          HF_LORA_REPO: ${{ secrets.HF_LORA_REPO }}
+          REMOTE_TRAINING_PROVIDER: ${{ vars.REMOTE_TRAINING_PROVIDER }}
+          REMOTE_TRAINING_WEBHOOK_URL: ${{ secrets.REMOTE_TRAINING_WEBHOOK_URL }}
+          REMOTE_TRAINING_BEARER_TOKEN: ${{ secrets.REMOTE_TRAINING_BEARER_TOKEN }}
+          REMOTE_TRAINING_SIGNED_URL_EXPIRES_IN: ${{ vars.REMOTE_TRAINING_SIGNED_URL_EXPIRES_IN }}
+        run: npm run train:remote-trigger -- --manifest outputs/training-datasets-manifest.json --readiness outputs/training-readiness.json
+
+      - name: 원격 학습 요청 리포트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-training-request
+          path: outputs/remote-training-request.json
           if-no-files-found: warn

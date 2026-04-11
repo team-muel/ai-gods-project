@@ -36,6 +36,8 @@ pnpm-debug.log*
 .cache/
 .parcel-cache/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 # Vite
 vite.config.js.timestamp-*
@@ -56,3 +58,4 @@ models/gguf/
 
 # 학습 산출물
 outputs/
+warehouse/

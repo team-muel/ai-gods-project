@@ -19,18 +19,13 @@ import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from warehouse_snapshot import collect_snapshot_preference_pairs, index_snapshot_debates, load_snapshot, normalize_message, snapshot_debates
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-try:
-    from supabase import create_client
-    SUPABASE_URL = os.environ.get("VITE_SUPABASE_URL")
-    SUPABASE_KEY = os.environ.get("VITE_SUPABASE_ANON_KEY")
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("❌ .env에서 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 필요")
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-except ImportError:
-    raise SystemExit("❌ supabase-py 필요: pip install supabase")
+supabase = None
+SNAPSHOT = None
+SNAPSHOT_DEBATES = {}
 
 GOD_IDS = ["cco", "cso", "cpo", "cmo", "cxo", "cfo", "cdo", "cto"]
 
@@ -55,9 +50,39 @@ def score_message(content: str) -> float:
     length_bonus = min(1.0, len(content) / 400)  # 적절한 길이 보너스
     return pos * 0.3 - neg * 0.2 + length_bonus
 
+def get_supabase_client():
+    global supabase
+    if supabase is not None:
+        return supabase
+
+    try:
+        from supabase import create_client
+    except ImportError:
+        raise SystemExit("❌ supabase-py 필요: pip install supabase")
+
+    supabase_url = os.environ.get("SUPABASE_URL") or os.environ.get("VITE_SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("VITE_SUPABASE_ANON_KEY")
+    if not supabase_url or not supabase_key:
+        raise SystemExit("❌ .env에서 SUPABASE_URL/VITE_SUPABASE_URL 과 SUPABASE_SERVICE_ROLE_KEY 또는 SUPABASE_ANON_KEY 필요")
+
+    supabase = create_client(supabase_url, supabase_key)
+    return supabase
+
 def fetch_debates_with_consensus() -> list:
     """합의 도달 토론 조회"""
-    result = supabase.table("debates") \
+    if SNAPSHOT is not None:
+        return [
+            {
+                "id": debate.get("id"),
+                "topic": debate.get("topic", ""),
+                "consensus": debate.get("consensus", ""),
+                "total_rounds": debate.get("total_rounds") or debate.get("totalRounds") or 1,
+            }
+            for debate in snapshot_debates(SNAPSHOT)
+            if debate.get("consensus") and len(str(debate.get("consensus"))) >= 50
+        ]
+
+    result = get_supabase_client().table("debates") \
         .select("id, topic, consensus, total_rounds") \
         .not_.is_("consensus", "null") \
         .execute()
@@ -65,24 +90,97 @@ def fetch_debates_with_consensus() -> list:
 
 def fetch_debates_without_consensus() -> list:
     """합의 미달 토론 조회 (consensus가 없거나 짧음)"""
-    result = supabase.table("debates") \
+    if SNAPSHOT is not None:
+        return [
+            {
+                "id": debate.get("id"),
+                "topic": debate.get("topic", ""),
+                "consensus": debate.get("consensus", ""),
+                "total_rounds": debate.get("total_rounds") or debate.get("totalRounds") or 1,
+            }
+            for debate in snapshot_debates(SNAPSHOT)
+            if not debate.get("consensus") or len(str(debate.get("consensus"))) < 50
+        ]
+
+    result = get_supabase_client().table("debates") \
         .select("id, topic, consensus, total_rounds") \
         .execute()
     all_debates = result.data or []
     return [d for d in all_debates if not d.get("consensus") or len(d["consensus"]) < 50]
 
 def fetch_messages_for_debate(debate_id: str) -> list:
-    result = supabase.table("debate_messages") \
+    if SNAPSHOT is not None:
+        debate = SNAPSHOT_DEBATES.get(str(debate_id)) or {}
+        return [normalize_message(message) for message in debate.get("messages", [])]
+
+    result = get_supabase_client().table("debate_messages") \
         .select("god_id, god_name, round, content") \
         .eq("debate_id", debate_id) \
         .order("round") \
         .execute()
     return result.data or []
 
+def fetch_preference_pairs(god_id: str) -> list:
+    if SNAPSHOT is not None:
+        return collect_snapshot_preference_pairs(SNAPSHOT, god_id)
+
+    try:
+        result = get_supabase_client().table("preference_pairs") \
+            .select("id, debate_id, topic, prompt, chosen, rejected, chosen_round, rejected_round, reward_score, source, metadata") \
+            .eq("god_id", god_id) \
+            .eq("status", "ready") \
+            .order("reward_score", desc=True) \
+            .limit(500) \
+            .execute()
+        return result.data or []
+    except Exception as error:
+        print(f"[{god_id}] preference_pairs 조회 실패, 기존 휴리스틱으로 폴백: {error}")
+        return []
+
+def build_pairs_from_preference_table(god_id: str) -> list:
+    system_prompt = GOD_SYSTEM_PROMPTS.get(god_id)
+    if not system_prompt:
+        return []
+
+    preference_rows = fetch_preference_pairs(god_id)
+    if not preference_rows:
+        return []
+
+    pairs = []
+    for row in preference_rows:
+        prompt_text = row.get("prompt") or f"주제: {row.get('topic', '')}\n\n당신의 전문 분야 관점에서 의견을 제시하세요."
+        chosen_text = (row.get("chosen") or "").strip()
+        rejected_text = (row.get("rejected") or "").strip()
+
+        if not chosen_text or not rejected_text or chosen_text == rejected_text:
+            continue
+
+        pairs.append({
+            "prompt": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt_text},
+            ],
+            "chosen": [{"role": "assistant", "content": chosen_text}],
+            "rejected": [{"role": "assistant", "content": rejected_text}],
+            "meta": {
+                "debate_id": row.get("debate_id"),
+                "reward_score": row.get("reward_score"),
+                "source": row.get("source"),
+                "chosen_round": row.get("chosen_round"),
+                "rejected_round": row.get("rejected_round"),
+            }
+        })
+
+    return pairs
+
 def build_dpo_pairs(god_id: str) -> list:
     system_prompt = GOD_SYSTEM_PROMPTS.get(god_id)
     if not system_prompt:
         return []
+
+    preferred_pairs = build_pairs_from_preference_table(god_id)
+    if preferred_pairs:
+        return preferred_pairs
 
     pairs = []
 
@@ -168,10 +266,18 @@ def build_dpo_pairs(god_id: str) -> list:
     return pairs
 
 def main():
+    global SNAPSHOT, SNAPSHOT_DEBATES
+
     parser = argparse.ArgumentParser(description="DPO 선호 쌍 생성")
     parser.add_argument("--god", default="all", help="god id 또는 all")
     parser.add_argument("--out", default=None, help="출력 경로 (단일 신일 때)")
+    parser.add_argument("--snapshot", default=None, help="warehouse snapshot.json 경로")
     args = parser.parse_args()
+
+    SNAPSHOT, snapshot_path = load_snapshot(args.snapshot)
+    SNAPSHOT_DEBATES = index_snapshot_debates(SNAPSHOT)
+    if snapshot_path:
+        print(f"[snapshot] 사용: {snapshot_path}")
 
     targets = GOD_IDS if args.god == "all" else [args.god]
     out_dir = Path("dpo-data")

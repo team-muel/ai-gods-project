@@ -1,0 +1,54 @@
+name: AI Gods Warehouse Maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 삭제 없이 archive/prune 후보만 점검
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '15 3 * * *'
+
+concurrency:
+  group: ai-gods-warehouse-maintenance-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 가상창고 유지보수 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            node scripts/archive-prune-debates.mjs --dry-run --out outputs/warehouse-maintenance.json
+          else
+            node scripts/archive-prune-debates.mjs --out outputs/warehouse-maintenance.json
+          fi
+
+      - name: 유지보수 리포트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: warehouse-maintenance
+          path: outputs/warehouse-maintenance.json
+          if-no-files-found: error

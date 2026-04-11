@@ -1,6 +1,8 @@
 import { classifyRelationship, keywordSimilarity } from '../../src/lib/memoryScoring.js'
+import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../../src/lib/rewardLearning.js'
 import { ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
+import { isVirtualWarehouseUnavailableError, persistDebateArchive } from '../_virtualWarehouse.js'
 
 const saveDebateMemory = async (supabase, godId, { topic, content, consensus, debateId }) => {
   const { data: newMemory, error } = await supabase
@@ -97,6 +99,7 @@ export default async function handler(req, res) {
           god: String(message.god || message.godId),
           round: Math.max(1, Number(message.round) || 1),
           content: String(message.content),
+          createdAt: typeof message.timestamp === 'string' && message.timestamp ? message.timestamp : new Date().toISOString(),
         }))
     : []
 
@@ -115,7 +118,7 @@ export default async function handler(req, res) {
         total_rounds: totalRounds,
         consensus,
       })
-      .select('id')
+      .select('id, topic, is_youtube, total_rounds, consensus, created_at')
       .single()
 
     if (debateError || !debateRow) {
@@ -129,6 +132,7 @@ export default async function handler(req, res) {
       god_name: message.god,
       round: message.round,
       content: message.content,
+      created_at: message.createdAt,
     }))
 
     const { error: messageError } = await supabase.from('debate_messages').insert(messageRows)
@@ -148,6 +152,42 @@ export default async function handler(req, res) {
         consensus,
         debateId,
       })
+    }
+
+    const { rewardEvents, preferencePairs } = buildRewardLearningArtifacts({
+      debateId,
+      topic,
+      totalRounds,
+      consensus,
+      messages: spokenMessages,
+      source: 'api_debate_complete',
+    })
+
+    if (rewardEvents.length > 0) {
+      const { error: rewardError } = await supabase.from('reward_events').insert(rewardEvents)
+      if (rewardError && !isRewardLearningUnavailableError(rewardError)) {
+        console.warn('[debates/complete] reward_events 저장 경고:', rewardError.message)
+      }
+    }
+
+    if (preferencePairs.length > 0) {
+      const { error: pairError } = await supabase.from('preference_pairs').insert(preferencePairs)
+      if (pairError && !isRewardLearningUnavailableError(pairError)) {
+        console.warn('[debates/complete] preference_pairs 저장 경고:', pairError.message)
+      }
+    }
+
+    const archiveResult = await persistDebateArchive({
+      supabase,
+      debateRow,
+      messages: messageRows,
+      rewardEvents,
+      preferencePairs,
+      source: 'api_debate_complete',
+    })
+
+    if (!archiveResult.ok && !isVirtualWarehouseUnavailableError(archiveResult.error)) {
+      console.warn('[debates/complete] debate archive 저장 경고:', archiveResult.error?.message || archiveResult.error)
     }
 
     return sendJson(res, 200, { ok: true, debateId })

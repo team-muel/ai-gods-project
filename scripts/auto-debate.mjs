@@ -8,15 +8,18 @@
 import { createClient } from '@supabase/supabase-js'
 import fs from 'fs'
 import path from 'path'
+import { buildRewardLearningArtifacts } from '../src/lib/rewardLearning.js'
+import { isVirtualWarehouseUnavailableError, persistDebateArchive } from '../api/_virtualWarehouse.js'
 
 const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_MODEL = 'llama-3.1-8b-instant'
 const GROQ_KEY   = process.env.GROQ_API_KEY
 const SERPER_KEY = process.env.SERPER_API_KEY
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  SUPABASE_KEY
 )
 
 const slugify = (text) =>
@@ -197,12 +200,19 @@ const runDebate = async (topic) => {
   const { data: debate } = await supabase
     .from('debates')
     .insert({ topic, is_youtube: false, total_rounds: finalRound, consensus })
-    .select('id').single()
+    .select('id, topic, is_youtube, total_rounds, consensus, created_at').single()
 
   if (debate?.id) {
-    await supabase.from('debate_messages').insert(
-      messages.map(m => ({ debate_id: debate.id, god_id: m.godId, god_name: m.god, round: m.round, content: m.content }))
-    )
+    const messageRows = messages.map(m => ({
+      debate_id: debate.id,
+      god_id: m.godId,
+      god_name: m.god,
+      round: m.round,
+      content: m.content,
+      created_at: m.timestamp,
+    }))
+
+    await supabase.from('debate_messages').insert(messageRows)
 
     for (const god of GODS) {
       const myMsgs = messages.filter(m => m.godId === god.id)
@@ -215,6 +225,37 @@ const runDebate = async (topic) => {
         relevance_score: 1.0,
       })
     }
+
+    const { rewardEvents, preferencePairs } = buildRewardLearningArtifacts({
+      debateId: debate.id,
+      topic,
+      totalRounds: finalRound,
+      consensus,
+      messages,
+      source: 'github_auto_debate',
+    })
+
+    if (rewardEvents.length > 0) {
+      await supabase.from('reward_events').insert(rewardEvents)
+    }
+
+    if (preferencePairs.length > 0) {
+      await supabase.from('preference_pairs').insert(preferencePairs)
+    }
+
+    const archiveResult = await persistDebateArchive({
+      supabase,
+      debateRow: debate,
+      messages: messageRows,
+      rewardEvents,
+      preferencePairs,
+      source: 'github_auto_debate',
+    })
+
+    if (!archiveResult.ok && !isVirtualWarehouseUnavailableError(archiveResult.error)) {
+      console.warn('⚠️  debate archive 저장 스킵:', archiveResult.error?.message || archiveResult.error)
+    }
+
     console.log(`✅ 저장 완료 (debate_id: ${debate.id})`)
 
     // 파일 저장 (GitHub Actions가 자동 커밋)

@@ -169,10 +169,10 @@ export class DiscussionOrchestrator {
 
     this._status('🎉 토론 완료!');
     if (this.onCompleteCallback) {
-      this.onCompleteCallback({ topic, messages: this.messages, consensus, totalRounds });
+      this.onCompleteCallback({ topic, debateId, messages: this.messages, consensus, totalRounds });
     }
 
-    return { topic, messages: this.messages, consensus, totalRounds };
+    return { topic, debateId, messages: this.messages, consensus, totalRounds };
   }
 }
 

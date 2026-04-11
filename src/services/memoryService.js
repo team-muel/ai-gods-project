@@ -8,6 +8,7 @@
 
 import { supabase } from '../lib/supabase.js'
 import { calcDecayScore, classifyRelationship, keywordSimilarity } from '../lib/memoryScoring.js'
+import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../lib/rewardLearning.js'
 import { postJson, requestJson } from './apiClient.js'
 
 const IS_DEV = import.meta.env.DEV === true
@@ -110,23 +111,46 @@ const saveDebateMemoryDirect = async (godId, { topic, content, consensus, debate
 
 }
 
+const saveRewardArtifactsDirect = async ({ debateId, topic, totalRounds, consensus, messages }) => {
+  const { rewardEvents, preferencePairs } = buildRewardLearningArtifacts({
+    debateId,
+    topic,
+    totalRounds,
+    consensus,
+    messages,
+    source: 'browser_debate_complete',
+  })
+
+  if (rewardEvents.length > 0) {
+    const { error } = await supabase.from('reward_events').insert(rewardEvents)
+    if (error && !isRewardLearningUnavailableError(error)) console.error('reward_events 저장 오류:', error)
+  }
+
+  if (preferencePairs.length > 0) {
+    const { error } = await supabase.from('preference_pairs').insert(preferencePairs)
+    if (error && !isRewardLearningUnavailableError(error)) console.error('preference_pairs 저장 오류:', error)
+  }
+}
+
 export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, consensus, messages }) => {
   if (!Array.isArray(messages) || messages.length === 0) return null
 
-  if (!IS_DEV) {
-    try {
-      const data = await postJson('/api/debates/complete', {
-        topic,
-        isYoutube,
-        totalRounds,
-        consensus,
-        messages,
-      })
-      return data?.debateId || null
-    } catch (error) {
+  try {
+    const data = await postJson('/api/debates/complete', {
+      topic,
+      isYoutube,
+      totalRounds,
+      consensus,
+      messages,
+    })
+    return data?.debateId || null
+  } catch (error) {
+    if (!IS_DEV) {
       console.error('토론 저장 오류:', error)
       return null
     }
+
+    console.warn('서버 저장 경로를 사용할 수 없어 로컬 direct 저장으로 폴백합니다:', error.message || error)
   }
 
   const debateId = await saveDebateDirect({ topic, isYoutube, totalRounds, consensus })
@@ -147,6 +171,14 @@ export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, conse
       debateId,
     })
   }
+
+  await saveRewardArtifactsDirect({
+    debateId,
+    topic,
+    totalRounds,
+    consensus,
+    messages,
+  })
 
   return debateId
 }

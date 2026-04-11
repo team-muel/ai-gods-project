@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { isRewardLearningUnavailableError } from '../src/lib/rewardLearning.js'
 
 const GOD_IDS = ['cco', 'cso', 'cpo', 'cmo', 'cxo', 'cfo', 'cdo', 'cto']
 
@@ -34,16 +35,28 @@ const writeGithubOutputs = (outputs) => {
   fs.appendFileSync(outputPath, `${lines.join('\n')}\n`, 'utf-8')
 }
 
-const describeRecommendation = ({ readyForSft, readyForDpo, recommendedForTraining, minMemoriesAcrossGods, thresholds }) => {
+const describeRecommendation = ({ readyForSft, readyForDpo, recommendedForTraining, minMemoriesAcrossGods, recentPreferencePairs7d, thresholds, rewardLearningEnabled }) => {
+  if (!rewardLearningEnabled) {
+    if (recommendedForTraining) {
+      return '데이터가 충분합니다. reward-learning 테이블이 아직 없어도 기존 합의 토론 기반 DPO 경로로 학습을 진행할 수 있습니다.'
+    }
+
+    if (readyForSft || readyForDpo) {
+      return 'reward-learning 테이블이 아직 없어 preference pair 기준은 건너뛰고 있습니다. 지금은 기존 합의 토론 기반 export와 DPO 경로를 계속 사용할 수 있습니다.'
+    }
+
+    return `아직 데이터가 부족합니다. reward-learning 테이블이 없어도 최소 토론 ${thresholds.minTotalDebates}건, 신별 active memory ${thresholds.minActiveMemoriesPerGod}건 이상을 목표로 쌓으세요. 현재 최소 active memory는 ${minMemoriesAcrossGods}건입니다.`
+  }
+
   if (recommendedForTraining) {
     return '데이터가 충분합니다. self-hosted GPU runner에서 SFT와 DPO를 수행할 수 있습니다.'
   }
 
   if (readyForSft || readyForDpo) {
-    return '학습 데이터 export는 할 수 있지만, 자체 모델 cutover를 위해서는 토론과 메모리를 더 쌓는 편이 좋습니다.'
+    return `학습 데이터 export는 할 수 있지만, 자체 모델 cutover를 위해서는 토론과 메모리를 더 쌓고 최근 7일 preference pair를 ${thresholds.minPreferencePairsLast7d}개 이상 확보하는 편이 좋습니다. 현재 ${recentPreferencePairs7d}개입니다.`
   }
 
-  return `아직 데이터가 부족합니다. 최소 토론 ${thresholds.minTotalDebates}건, 신별 active memory ${thresholds.minActiveMemoriesPerGod}건 이상을 목표로 쌓으세요. 현재 최소 active memory는 ${minMemoriesAcrossGods}건입니다.`
+  return `아직 데이터가 부족합니다. 최소 토론 ${thresholds.minTotalDebates}건, 신별 active memory ${thresholds.minActiveMemoriesPerGod}건, 최근 7일 preference pair ${thresholds.minPreferencePairsLast7d}건 이상을 목표로 쌓으세요. 현재 최소 active memory는 ${minMemoriesAcrossGods}건이고, 최근 pair는 ${recentPreferencePairs7d}건입니다.`
 }
 
 const main = async () => {
@@ -61,6 +74,7 @@ const main = async () => {
     minConsensusDebates: parseThreshold('TRAIN_MIN_CONSENSUS_DEBATES', 20),
     minActiveMemoriesPerGod: parseThreshold('TRAIN_MIN_ACTIVE_MEMORIES_PER_GOD', 8),
     minMessagesLast7d: parseThreshold('TRAIN_MIN_MESSAGES_LAST_7D', 80),
+    minPreferencePairsLast7d: parseThreshold('TRAIN_MIN_PREFERENCE_PAIRS_LAST_7D', 24),
   }
 
   const now = new Date()
@@ -72,18 +86,31 @@ const main = async () => {
     },
   })
 
-  const [godStatsResult, totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult] = await Promise.all([
+  const [godStatsResult, totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult, recentPreferencePairsResult] = await Promise.all([
     supabase.from('god_stats').select('god_id, total_debates, total_messages, avg_response_length, last_active'),
     supabase.from('debates').select('*', { count: 'exact', head: true }),
     supabase.from('debates').select('*', { count: 'exact', head: true }).not('consensus', 'is', null).neq('consensus', ''),
     supabase.from('debates').select('*', { count: 'exact', head: true }).gte('created_at', since7d.toISOString()),
     supabase.from('debate_messages').select('*', { count: 'exact', head: true }).gte('created_at', since7d.toISOString()),
+    supabase.from('preference_pairs').select('*', { count: 'exact', head: true }).eq('status', 'ready').gte('created_at', since7d.toISOString()),
   ])
 
   for (const result of [godStatsResult, totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult]) {
     if (result.error) {
       throw new Error(result.error.message)
     }
+  }
+
+  let rewardLearningEnabled = true
+  let recentPreferencePairs7d = 0
+  if (recentPreferencePairsResult.error) {
+    if (isRewardLearningUnavailableError(recentPreferencePairsResult.error)) {
+      rewardLearningEnabled = false
+    } else {
+      throw new Error(recentPreferencePairsResult.error.message)
+    }
+  } else {
+    recentPreferencePairs7d = recentPreferencePairsResult.count || 0
   }
 
   const statsByGod = new Map((godStatsResult.data || []).map((row) => [row.god_id, row]))
@@ -123,7 +150,9 @@ const main = async () => {
 
   const readyForExport = totalDebates >= Math.min(10, thresholds.minTotalDebates)
   const readyForSft = totalDebates >= thresholds.minTotalDebates && byGod.every((entry) => entry.activeMemories >= thresholds.minActiveMemoriesPerGod)
-  const readyForDpo = consensusDebates >= thresholds.minConsensusDebates
+  const readyForDpo = rewardLearningEnabled
+    ? consensusDebates >= thresholds.minConsensusDebates && recentPreferencePairs7d >= thresholds.minPreferencePairsLast7d
+    : consensusDebates >= thresholds.minConsensusDebates
   const recommendedForTraining = readyForSft && readyForDpo && totalDebates >= thresholds.recommendedDebates && recentMessages7d >= thresholds.minMessagesLast7d
 
   const summary = {
@@ -134,6 +163,8 @@ const main = async () => {
       consensusDebates,
       recentDebates7d,
       recentMessages7d,
+      recentPreferencePairs7d,
+      rewardLearningEnabled,
       minMemoriesAcrossGods,
     },
     gates: {
@@ -147,7 +178,9 @@ const main = async () => {
       readyForDpo,
       recommendedForTraining,
       minMemoriesAcrossGods,
+      recentPreferencePairs7d,
       thresholds,
+      rewardLearningEnabled,
     }),
     byGod,
   }
