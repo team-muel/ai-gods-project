@@ -27,6 +27,9 @@ jobs:
       - name: 의존성 설치
         run: npm ci
 
+      - name: Request Guard 검증
+        run: npm run check:request-guard
+
       - name: 빌드 검증
         run: npm run build
 

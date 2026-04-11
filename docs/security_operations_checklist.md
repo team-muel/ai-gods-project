@@ -6,6 +6,7 @@
 - Keep SUPABASE_SERVICE_ROLE_KEY server-side only.
 - Confirm browser production path does not directly read or write private Supabase tables.
 - Run npm run build.
+- Run npm run check:request-guard.
 - Run npm run audit:supabase-access.
 - Confirm outputs/supabase-access-audit.json reports anonTableReadSafe=true.
 
@@ -44,6 +45,7 @@
 - Verify anon cannot read protected tables.
 - Verify private dataset objects are not downloadable with anon.
 - Verify deployment uses GROQ_API_KEY, not deprecated VITE_GROQ_API_KEY.
+- Verify npm run check:request-guard passes.
 - Verify rate-limited APIs return 429 when abused.
 - Verify warehouse buckets remain private after deployment.
 

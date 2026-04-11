@@ -11,6 +11,7 @@
     "apply-rls": "node --env-file=.env scripts/apply-supabase-rls.mjs",
     "setup:ops-env": "node --env-file=.env scripts/setup-ops-dashboard-env.mjs",
     "check:warehouse": "node --env-file=.env scripts/check-warehouse-status.mjs",
+    "check:request-guard": "node scripts/check-request-guard.mjs",
     "check:training-readiness": "node --env-file=.env scripts/check-training-readiness.mjs --out outputs/training-readiness.json",
     "prepare:training-data": "node --env-file=.env scripts/prepare-training-datasets.mjs",
     "export-data": "python scripts/export-training-data.py",
