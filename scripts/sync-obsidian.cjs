@@ -1,25 +1,21 @@
 /**
- * Supabase → Obsidian + Google Drive 동기화 스크립트
+ * Supabase → Obsidian 동기화 스크립트
  *
  * 사용법: npm run sync-obsidian
  *
- * Supabase의 모든 god_memories를 로컬 Obsidian vault에 .md 파일로 쓰고
- * Google Drive에도 업로드합니다.
+ * Supabase의 모든 god_memories를 로컬 Obsidian vault에 .md 파일로 씁니다.
  */
 
 const { createClient } = require('@supabase/supabase-js')
-const { google }       = require('googleapis')
 const fs   = require('fs')
 const path = require('path')
 
-const SUPABASE_URL     = process.env.VITE_SUPABASE_URL
-const SUPABASE_KEY     = process.env.VITE_SUPABASE_ANON_KEY
+const SUPABASE_URL     = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+const SUPABASE_KEY     = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY
 const VAULT_PATH       = process.env.OBSIDIAN_VAULT_PATH
-const GDRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GDRIVE_SA_JSON   = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('❌ VITE_SUPABASE_URL 또는 VITE_SUPABASE_ANON_KEY가 .env에 없습니다.')
+  console.error('❌ SUPABASE_URL/VITE_SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY가 .env에 없습니다.')
   process.exit(1)
 }
 if (!VAULT_PATH) {
@@ -28,24 +24,6 @@ if (!VAULT_PATH) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
-
-// ── Google Drive 설정 (없으면 스킵) ───────────────────────────
-let driveClient = null
-if (GDRIVE_SA_JSON && GDRIVE_FOLDER_ID) {
-  try {
-    const sa = JSON.parse(GDRIVE_SA_JSON)
-    const auth = new google.auth.GoogleAuth({
-      credentials: sa,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
-    })
-    driveClient = google.drive({ version: 'v3', auth })
-    console.log('☁️  Google Drive 연결됨')
-  } catch (e) {
-    console.warn('⚠️  Google Drive 설정 실패 (스킵):', e.message)
-  }
-} else {
-  console.log('ℹ️  GOOGLE_SERVICE_ACCOUNT_JSON 미설정 → Google Drive 스킵')
-}
 
 const GOD_NAMES = {
   cco: 'Muse', cso: 'Atlas', cpo: 'Forge', cmo: 'Mercury',
@@ -121,31 +99,8 @@ ${consensus || '(합의문 없음)'}
   return { fileName, content }
 }
 
-// ── Google Drive 업로드 ───────────────────────────────────────
-const uploadToDrive = async (fileName, content) => {
-  if (!driveClient || !content) return
-
-  try {
-    const { Readable } = require('stream')
-    await driveClient.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [GDRIVE_FOLDER_ID],
-        mimeType: 'text/markdown',
-      },
-      media: {
-        mimeType: 'text/markdown',
-        body: Readable.from([content]),
-      },
-    })
-    console.log(`  ☁️  Drive 업로드: ${fileName}`)
-  } catch (e) {
-    console.warn(`  ⚠️  Drive 업로드 실패: ${e.message}`)
-  }
-}
-
 async function main() {
-  console.log('🔄 Supabase → Obsidian + Google Drive 동기화 시작...')
+  console.log('🔄 Supabase → Obsidian 동기화 시작...')
   console.log(`📂 vault: ${VAULT_PATH}`)
 
   // god_memories 조회
@@ -202,7 +157,6 @@ async function main() {
 
     if (content) {
       console.log(`  ✅ [${godName}] ${fileName}`)
-      await uploadToDrive(fileName, content)
       written++
     } else {
       skipped++
@@ -220,7 +174,6 @@ async function main() {
       })
       if (summary.content) {
         console.log(`  📋 요약: ${summary.fileName}`)
-        await uploadToDrive(summary.fileName, summary.content)
         written++
       }
     }

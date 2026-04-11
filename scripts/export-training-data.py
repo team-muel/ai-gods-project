@@ -1,27 +1,15 @@
-"""
-Supabase god_memories → Unsloth 학습용 JSONL 변환 스크립트
+"""Supabase 또는 warehouse snapshot → Unsloth 학습용 JSONL 변환 스크립트."""
 
-사용법:
-  python scripts/export-training-data.py
-
-출력: training-data/{god_id}.jsonl (신별 학습 파일)
-"""
-
+import argparse
 import os
 import json
 from pathlib import Path
 from dotenv import load_dotenv
-from supabase import create_client
+from warehouse_snapshot import collect_sft_memories, load_snapshot
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-SUPABASE_URL = os.environ.get("VITE_SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("VITE_SUPABASE_ANON_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise SystemExit("❌ .env에서 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 필요")
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = None
 
 GOD_SYSTEM_PROMPTS = {
     "cco": "당신은 Muse(뮤즈), AI 기업의 최고 창의 책임자(CCO)입니다. 창의성, 브랜드 스토리텔링, 감성적 메시지 관점에서 날카롭게 분석합니다. 항상 창의적이고 독창적인 시각을 제시하세요. 반드시 한국어로 답변하세요.",
@@ -34,8 +22,31 @@ GOD_SYSTEM_PROMPTS = {
     "cto": "당신은 Nexus(넥서스), AI 기업의 최고 기술 책임자(CTO)입니다. 기술 아키텍처, 인프라, 기술적 실현 가능성 관점에서 분석합니다. 기술적 현실과 혁신 가능성을 균형 있게 제시하세요. 반드시 한국어로 답변하세요.",
 }
 
-def fetch_memories(god_id: str) -> list:
-    result = supabase.table("god_memories") \
+
+def get_supabase_client():
+    global supabase
+    if supabase is not None:
+        return supabase
+
+    try:
+        from supabase import create_client
+    except ImportError:
+        raise SystemExit("❌ supabase-py 필요: pip install supabase")
+
+    supabase_url = os.environ.get("SUPABASE_URL") or os.environ.get("VITE_SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("VITE_SUPABASE_ANON_KEY")
+
+    if not supabase_url or not supabase_key:
+        raise SystemExit("❌ .env에서 SUPABASE_URL/VITE_SUPABASE_URL 과 SUPABASE_SERVICE_ROLE_KEY 또는 SUPABASE_ANON_KEY 필요")
+
+    supabase = create_client(supabase_url, supabase_key)
+    return supabase
+
+def fetch_memories(god_id: str, snapshot: dict | None) -> list:
+    if snapshot is not None:
+        return collect_sft_memories(snapshot, god_id)
+
+    result = get_supabase_client().table("god_memories") \
         .select("topic, my_opinion, consensus, created_at") \
         .eq("god_id", god_id) \
         .eq("status", "active") \
@@ -73,12 +84,20 @@ def to_jsonl_entry(god_id: str, memory: dict) -> dict:
     return entry
 
 def main():
+    parser = argparse.ArgumentParser(description="SFT 학습 데이터 export")
+    parser.add_argument("--snapshot", default=None, help="warehouse snapshot.json 경로")
+    args = parser.parse_args()
+
+    snapshot, snapshot_path = load_snapshot(args.snapshot)
+    if snapshot_path:
+        print(f"[snapshot] 사용: {snapshot_path}")
+
     out_dir = Path("training-data")
     out_dir.mkdir(exist_ok=True)
 
     total = 0
     for god_id in GOD_SYSTEM_PROMPTS:
-        memories = fetch_memories(god_id)
+        memories = fetch_memories(god_id, snapshot)
         entries = [to_jsonl_entry(god_id, m) for m in memories]
         entries = [e for e in entries if e]  # None 제거
 

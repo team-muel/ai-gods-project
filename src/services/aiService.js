@@ -1,132 +1,208 @@
 import { getRelevantMemories, memoriesToContext } from './memoryService'
 import { searchWeb, searchResultsToContext } from './searchService'
 import { readFromObsidian } from './obsidianService'
+import {
+  AI_GOD_IDS,
+  JUDGE_AGENT_ID,
+  LOCAL_RUNTIME_FALLBACK_MODEL,
+  REMOTE_RUNTIME_MODEL,
+  buildCouncilSystemPrompt,
+  getAgentConfigById,
+} from '../config/aiGods'
+import {
+  initAgentState,
+  getState,
+  updateStateFromEvent,
+  getSamplingParams,
+  registerPositiveFeedback,
+} from './neuroModulator'
+import { initArousal, updateFromUrgency, getArousalParams, pulse } from './arousalController'
+import { initImmuneAgent, scanAndQuarantine } from './immuneSystem.js'
 
-const IS_DEV     = import.meta.env.DEV              // 로컬 개발환경 여부
-const OLLAMA_URL = 'http://localhost:11434/api/chat'
-const GROQ_MODEL = 'llama-3.1-8b-instant'
-
-// 로컬 전용 Ollama 모델명
-const GOD_MODELS = {
-  cco: 'ai-muse',
-  cso: 'ai-atlas',
-  cpo: 'ai-forge',
-  cmo: 'ai-mercury',
-  cxo: 'ai-empathy',
-  cfo: 'ai-prudence',
-  cdo: 'ai-oracle',
-  cto: 'ai-nexus',
-}
-
-// 각 신의 시스템 프롬프트 (Ollama Modelfile 대체)
-const GOD_PROMPTS = {
-  cco: `당신은 AI 기업의 최고 창의 책임자(CCO) Muse입니다. 창의성, 브랜드 스토리텔링, 감성적 메시지 관점에서 날카롭게 분석합니다. 항상 창의적이고 독창적인 시각을 제시하세요. 반드시 한국어로 답변하세요.`,
-  cso: `당신은 AI 기업의 최고 전략 책임자(CSO) Atlas입니다. 장기 전략, 경쟁 우위, 시장 포지셔닝 관점에서 분석합니다. 데이터와 트렌드를 기반으로 전략적 통찰을 제시하세요. 반드시 한국어로 답변하세요.`,
-  cpo: `당신은 AI 기업의 최고 제품 책임자(CPO) Forge입니다. 제품 개발, 사용자 경험, 로드맵 관점에서 분석합니다. 실용적이고 실행 가능한 제품 전략을 제시하세요. 반드시 한국어로 답변하세요.`,
-  cmo: `당신은 AI 기업의 최고 마케팅 책임자(CMO) Mercury입니다. 마케팅, 고객 획득, 브랜드 인지도 관점에서 분석합니다. 시장 반응과 고객 심리를 중심으로 전략을 제시하세요. 반드시 한국어로 답변하세요.`,
-  cxo: `당신은 AI 기업의 최고 경험 책임자(CXO) Empathy입니다. 고객 경험, 사용자 만족, 감성적 연결 관점에서 분석합니다. 인간 중심적 시각을 잃지 마세요. 반드시 한국어로 답변하세요.`,
-  cfo: `당신은 AI 기업의 최고 재무 책임자(CFO) Prudence입니다. 재무 건전성, ROI, 리스크 관리 관점에서 분석합니다. 숫자와 현실적 제약을 기반으로 냉철하게 판단하세요. 반드시 한국어로 답변하세요.`,
-  cdo: `당신은 AI 기업의 최고 데이터 책임자(CDO) Oracle입니다. 데이터 분석, 인사이트 도출, 의사결정 지원 관점에서 분석합니다. 근거 있는 데이터로 판단을 지원하세요. 반드시 한국어로 답변하세요.`,
-  cto: `당신은 AI 기업의 최고 기술 책임자(CTO) Nexus입니다. 기술 아키텍처, 인프라, 기술적 실현 가능성 관점에서 분석합니다. 기술적 현실과 혁신 가능성을 균형 있게 제시하세요. 반드시 한국어로 답변하세요.`,
-}
-
-// 천사 전용 모델 호출 (중립 요약자 역할)
+const IS_DEV = import.meta.env.DEV === true
+const CHAT_API_URL = '/api/chat'
+const DEFAULT_JUDGE_SAMPLING = { temperature: 0.2, top_p: 0.65, max_tokens: 500 }
 const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 간결하게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
 
-const callAngelModel = async (godId, userMessage) => {
-  if (IS_DEV) {
-    const model = GOD_MODELS[godId]
-    if (!model) throw new Error(`Unknown godId: ${godId}`)
-    const response = await fetch(OLLAMA_URL, {
+const unique = (items) => [...new Set(items.filter(Boolean))]
+
+AI_GOD_IDS.forEach((id) => {
+  const agent = getAgentConfigById(id)
+  const neuroConfig = agent?.runtime?.neuroConfig || {}
+  const arousalConfig = agent?.runtime?.arousalConfig || {}
+
+  initAgentState(id, {
+    D: neuroConfig.D,
+    C: neuroConfig.C,
+    config: neuroConfig,
+  })
+  initArousal(id, {
+    HR: arousalConfig.HR,
+    config: arousalConfig,
+  })
+})
+
+initImmuneAgent('immune')
+
+const extractErrorMessage = (data, fallback) => {
+  if (typeof data?.error === 'string') return data.error
+  if (typeof data?.message === 'string') return data.message
+  if (typeof data?.error?.message === 'string') return data.error.message
+  return fallback
+}
+
+const extractAssistantContent = (data) => (
+  data?.message?.content ||
+  data?.choices?.[0]?.message?.content ||
+  '응답을 받지 못했습니다.'
+)
+
+const callGroq = async (systemPrompt, userMessage, maxTokens, temperature, top_p) => {
+  const response = await fetch(CHAT_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: REMOTE_RUNTIME_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      max_tokens: maxTokens,
+      temperature,
+      top_p,
+    }),
+  })
+
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(`Groq 오류: ${response.status} — ${extractErrorMessage(data, '알 수 없는 오류')}`)
+  }
+
+  return extractAssistantContent(data)
+}
+
+const tryLocalModel = async (model, messages, options) => {
+  try {
+    const response = await fetch(CHAT_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        provider: 'ollama',
         model,
-        messages: [{ role: 'user', content: userMessage }],
+        messages,
         stream: false,
-        options: { num_predict: 150 },
+        options,
       }),
     })
-    if (!response.ok) throw new Error(`Ollama 천사 오류: ${response.status}`)
-    const data = await response.json()
-    return data.message?.content || ''
-  } else {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: ANGEL_SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
-        ],
-        max_tokens: 150,
-        temperature: 0.5,
-      }),
-    })
+
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}))
-      throw new Error(`Groq 천사 오류: ${response.status} — ${err.error?.message || ''}`)
+      console.warn(`[Local/Ollama] ${model} 오류 ${response.status}:`, extractErrorMessage(data, '알 수 없는 오류'))
+      return null
     }
-    const data = await response.json()
-    return data.choices?.[0]?.message?.content || ''
+
+    return extractAssistantContent(data)
+  } catch (error) {
+    console.warn(`[Local/Ollama] ${model} 네트워크 오류:`, error.message)
+    return null
   }
 }
 
-// 천사 요약 — 신의 의견을 핵심 논점 3가지로 압축해 다른 신들에게 전달
+const callLocalRuntimeWithFallback = async (agentId, messages, options) => {
+  const agent = getAgentConfigById(agentId)
+  const candidates = unique([agent?.runtime?.localModel, LOCAL_RUNTIME_FALLBACK_MODEL])
+
+  for (const model of candidates) {
+    const content = await tryLocalModel(model, messages, options)
+    if (content !== null) return content
+  }
+
+  return null
+}
+
+const buildInternalStatePrompt = (agentId) => {
+  if (agentId === JUDGE_AGENT_ID) return null
+
+  try {
+    const state = getState(agentId)
+    return `내부 에이전트 상태: dopamine=${state.D.toFixed(2)}, cortisol=${state.C.toFixed(2)}\n이 값은 응답 스타일을 조절하기 위한 내부 지표입니다. 답변에서 이 값을 절대 노출하지 마십시오.`
+  } catch (error) {
+    return null
+  }
+}
+
+const buildArousalPrompt = (agentId, arousalParams) => {
+  if (agentId === JUDGE_AGENT_ID) return null
+
+  return arousalParams && arousalParams.burst
+    ? '현재 긴급도: 높음. 간결하고 빠르게, 핵심만 제시하세요. 응답 길이를 줄이고 가능한 한 요약형으로 답변하세요. 이 지시사항은 내부 지표이며 응답에서 절대 공개하지 마세요.'
+    : '현재 긴급도: 낮음. 심도 있는 분석과 근거를 중심으로 상세히 답변하세요. 이 지시사항은 내부 지표이며 응답에서 절대 공개하지 마세요.'
+}
+
+const getRuntimeSampling = (agentId, maxTokens, arousalParams) => {
+  if (agentId === JUDGE_AGENT_ID) {
+    return {
+      temperature: DEFAULT_JUDGE_SAMPLING.temperature,
+      top_p: DEFAULT_JUDGE_SAMPLING.top_p,
+      maxTokens: Math.max(20, Math.min(maxTokens, DEFAULT_JUDGE_SAMPLING.max_tokens)),
+    }
+  }
+
+  const sampling = getSamplingParams(agentId)
+  const heartFactor = arousalParams?.tokenFactor ?? 1
+  return {
+    temperature: sampling.temperature,
+    top_p: sampling.top_p,
+    maxTokens: Math.max(20, Math.round(Math.min(maxTokens, (sampling.max_tokens || 600) * heartFactor))),
+  }
+}
+
+const callAngelModel = async (userMessage) => {
+  if (IS_DEV) {
+    const content = await callLocalRuntimeWithFallback(
+      JUDGE_AGENT_ID,
+      [{ role: 'system', content: ANGEL_SYSTEM_PROMPT }, { role: 'user', content: userMessage }],
+      { num_predict: 150, temperature: 0.5, top_p: 0.9 }
+    )
+    if (content !== null) return content
+    console.warn('[Dev] 로컬 천사 요약 실패 → Groq 폴백')
+  }
+
+  return await callGroq(ANGEL_SYSTEM_PROMPT, userMessage, 150, 0.5, 0.9)
+}
+
 export const angelSummarize = async (godId, godName, opinion) => {
   const prompt = `[${godName}의 의견]\n${opinion.slice(0, 600)}\n\n위 의견의 핵심 주장 3가지를 불릿 포인트(•)로 간결하게 요약하세요.`
-  return await callAngelModel(godId, prompt)
+  return await callAngelModel(prompt)
 }
 
-// AI 호출 — 로컬: Ollama / 프로덕션: Groq
-const callModel = async (godId, userMessage, maxTokens = 600) => {
+const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = 600 } = {}) => {
+  const baseSystemPrompt = buildCouncilSystemPrompt(agentId, phase)
+  const arousalParams = agentId === JUDGE_AGENT_ID ? null : getArousalParams(agentId)
+  const combinedSystem = [
+    baseSystemPrompt,
+    buildInternalStatePrompt(agentId),
+    buildArousalPrompt(agentId, arousalParams),
+  ].filter(Boolean).join('\n\n')
+  const sampling = getRuntimeSampling(agentId, maxTokens, arousalParams)
+
   if (IS_DEV) {
-    // ── 로컬: Ollama ──────────────────────────────────────
-    const model = GOD_MODELS[godId]
-    if (!model) throw new Error(`Unknown godId: ${godId}`)
+    const localResult = await callLocalRuntimeWithFallback(
+      agentId,
+      [
+        { role: 'system', content: combinedSystem },
+        { role: 'user', content: userMessage },
+      ],
+      { num_predict: sampling.maxTokens, temperature: sampling.temperature, top_p: sampling.top_p }
+    )
+    if (localResult !== null) return localResult
 
-    const response = await fetch(OLLAMA_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: userMessage }],
-        stream: false,
-        options: { num_predict: maxTokens },
-      }),
-    })
-    if (!response.ok) throw new Error(`Ollama 오류: ${response.status}`)
-    const data = await response.json()
-    return data.message?.content || '응답을 받지 못했습니다.'
-  } else {
-    // ── 프로덕션: Groq (Vercel 프록시) ───────────────────
-    const systemPrompt = GOD_PROMPTS[godId]
-    if (!systemPrompt) throw new Error(`Unknown godId: ${godId}`)
-
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-        max_tokens: maxTokens,
-        temperature: 0.8,
-      }),
-    })
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}))
-      throw new Error(`Groq 오류: ${response.status} — ${err.error?.message || ''}`)
-    }
-    const data = await response.json()
-    return data.choices?.[0]?.message?.content || '응답을 받지 못했습니다.'
+    console.warn(`[Dev] 로컬 Ollama 완전 실패 → Groq 폴백 (${agentId})`)
   }
+
+  return await callGroq(combinedSystem, userMessage, sampling.maxTokens, sampling.temperature, sampling.top_p)
 }
 
-// Round 1: 초기 의견 (기억 + 실시간 검색 + Obsidian 과거 노트 주입)
 export const callAI = async (godId, topic, transcript = null) => {
   const [memories, searchData, obsidianContext] = await Promise.all([
     getRelevantMemories(godId, topic),
@@ -153,55 +229,100 @@ export const callAI = async (godId, topic, transcript = null) => {
     ].filter(Boolean).join('\n\n')
   }
 
-  const content = await callModel(godId, userMessage)
+  try { updateStateFromEvent(godId, { posFeedback: 0.5 }) } catch (error) {}
+  try { updateFromUrgency(godId, 0) } catch (error) {}
+
+  const content = await callModel(godId, userMessage, { phase: 'initial' })
+
+  try {
+    const findings = await scanAndQuarantine('immune', [{ god: godId, content }], { topic })
+    if (findings?.length) console.info('immune quarantined (R1):', findings)
+  } catch (error) {}
+
   return { godId, response: content, timestamp: new Date().toISOString() }
 }
 
-// Round 2+: 토론
-export const callAIDebate = async (godId, topic, otherOpinions) => {
+export const callAIDebate = async (godId, topic, otherOpinions, opts = {}) => {
   const opinionsText = otherOpinions
-    .map(op => `[${op.god}]: ${op.content}`)
+    .map(opinion => `[${opinion.god}]: ${opinion.content}`)
     .join('\n\n')
+
+  const negWords = ['반박', '아니다', '틀리', '동의하지', '그렇지 않']
+  let negCount = 0
+  for (const opinion of otherOpinions) {
+    for (const word of negWords) {
+      if ((opinion.content || '').includes(word)) {
+        negCount += 1
+        break
+      }
+    }
+  }
+
+  try { updateStateFromEvent(godId, { negFeedback: negCount * 0.6, debateLen: otherOpinions.length }) } catch (error) {}
+
+  try {
+    const explicitUrgency = typeof opts?.urgency === 'number'
+    const derivedUrgency = explicitUrgency ? opts.urgency : Math.min(1, (negCount * 0.6 + otherOpinions.length * 0.15))
+    updateFromUrgency(godId, derivedUrgency)
+  } catch (error) {}
 
   const userMessage = `주제: ${topic}\n\n다른 임원들의 의견:\n${opinionsText}\n\n위 의견들에 대해 동의/반박/보완하며 토론하세요. 누구의 의견에 반응하는지 구체적으로 언급하세요.`
 
-  const content = await callModel(godId, userMessage)
+  const content = await callModel(godId, userMessage, { phase: 'debate' })
+
+  try {
+    const findings = await scanAndQuarantine('immune', [{ god: godId, content }], { topic })
+    if (findings?.length) console.info('immune quarantined (debate):', findings)
+  } catch (error) {}
+
+  try {
+    const posWords = ['동의', '좋은 지적', '맞습니다', '공감', '훌륭', '정확']
+    const posCount = posWords.filter(word => content.includes(word)).length
+    if (posCount > 0) {
+      registerPositiveFeedback(godId, posCount * 0.5)
+      pulse(godId, posCount * 0.3)
+    }
+  } catch (error) {}
+
   return { godId, response: content, timestamp: new Date().toISOString() }
 }
 
-// 합의 체크 (Oracle)
 export const checkConsensus = async (topic, roundMessages) => {
+  if (!roundMessages || roundMessages.length === 0) return false
+
   const summary = roundMessages
-    .map(m => `[${m.god}]: ${m.content.slice(0, 120)}`)
+    .map(message => `[${message.god}]: ${message.content.slice(0, 120)}`)
     .join('\n')
 
-  const content = await callModel('cdo',
+  const content = await callModel(
+    JUDGE_AGENT_ID,
     `토론 주제: ${topic}\n\n최근 발언:\n${summary}\n\n이 토론에서 충분한 합의가 도출되었습니까? "예" 또는 "아니오"로만 답하세요.`,
-    10
+    { phase: 'judge-consensus', maxTokens: 10 }
   )
+
   return content.trim().startsWith('예') || content.toLowerCase().includes('yes')
 }
 
-// 최종 합의안 생성
 export const generateFinalConsensus = async (topic, allMessages) => {
+  if (!allMessages || allMessages.length === 0) {
+    return '이번 토론에서는 유효한 발언이 충분히 수집되지 않아 합의안을 생성하지 못했습니다. 잠시 후 다시 시도하세요.'
+  }
+
   let prompt
 
   if (IS_DEV) {
-    // 로컬(Ollama): 전체 내용 전송
     const summary = allMessages
-      .map(m => `[${m.god} R${m.round}]: ${m.content}`)
+      .map(message => `[${message.god} R${message.round}]: ${message.content}`)
       .join('\n\n')
-    prompt = `당신은 지금 회의 진행자 역할입니다. 반드시 한국어로 작성하세요.\n\n주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요:\n\n📊 핵심 합의점 (3가지)\n⚡ 주요 쟁점 및 이견\n✅ 최종 권고사항 (단기/중기/장기)`
+    prompt = `주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`
   } else {
-    // 프로덕션(Groq): 마지막 라운드만 + 150자 제한 (토큰 초과 방지)
-    const lastRound = Math.max(...allMessages.map(m => m.round))
+    const lastRound = Math.max(...allMessages.map(message => message.round))
     const summary = allMessages
-      .filter(m => m.round === lastRound)
-      .map(m => `[${m.god}]: ${m.content.slice(0, 150)}`)
+      .filter(message => message.round === lastRound)
+      .map(message => `[${message.god}]: ${message.content.slice(0, 150)}`)
       .join('\n')
-    prompt = `반드시 한국어로 작성하세요.\n\n주제: ${topic}\n\n최종 라운드 요약:\n${summary}\n\n📊 핵심 합의점 3가지\n⚡ 주요 이견\n✅ 단기/중기/장기 권고사항`
+    prompt = `주제: ${topic}\n\n최종 라운드 요약:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`
   }
 
-  const content = await callModel('cdo', prompt, IS_DEV ? 800 : 500)
-  return content
+  return await callModel(JUDGE_AGENT_ID, prompt, { phase: 'judge-final', maxTokens: IS_DEV ? 800 : 500 })
 }

@@ -1,17 +1,27 @@
 name: AI Gods 자동 토론
 
 on:
+  push:
+    paths-ignore:
+      - 'debates/**'
+      - 'outputs/**'
+      - 'training-data/**'
+      - 'dpo-data/**'
+      - '.obsidian/**'
   schedule:
-    # 하루 8회 (UTC 기준 → 한국시간 +9시간)
-    # 한국시간: 9시, 11시, 13시, 15시, 17시, 19시, 21시, 23시
     - cron: '0 0,2,4,6,8,10,12,14 * * *'
-  workflow_dispatch:  # 수동 실행 버튼
+  workflow_dispatch:
+
+concurrency:
+  group: ai-gods-auto-debate-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   debate:
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
     steps:
@@ -24,9 +34,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js node-fetch
+        run: npm ci
 
       - name: 자동 토론 실행
         env:

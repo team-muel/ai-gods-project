@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { useDiscussionStore } from '../../store/discussionStore';
 import { isYoutubeUrl, extractVideoId, fetchTranscript } from '../../services/youtubeService';
 
-export default function QuestionPanel() {
+export default function QuestionPanel({ onOpenDashboard }) {
   const [input, setInput] = useState('');
   const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState('');
 
-  const { isDiscussing, startDiscussion, currentRound, statusText, clearDiscussion, consensus } = useDiscussionStore();
+  const { isDiscussing, startDiscussion, currentRound, totalRounds, statusText, clearDiscussion, consensus } = useDiscussionStore();
 
   const isYT = isYoutubeUrl(input)
   const isLoading = isDiscussing || isFetchingTranscript
+  const displayTotalRounds = Math.max(totalRounds || 0, 1)
+  const progressWidth = Math.min(100, Math.max(0, (currentRound / displayTotalRounds) * 100))
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -128,6 +130,21 @@ export default function QuestionPanel() {
             : isYT ? '▶ YouTube 영상 토론 시작'
             : '🚀 토론 시작'}
         </button>
+
+        <button
+          type="button"
+          onClick={onOpenDashboard}
+          style={{
+            width: '100%', padding: '10px', marginTop: '8px',
+            background: 'linear-gradient(135deg, rgba(0, 200, 180, 0.2) 0%, rgba(0, 110, 255, 0.18) 100%)',
+            border: '1px solid rgba(120, 230, 255, 0.22)', borderRadius: '6px', color: '#bff8ff',
+            fontSize: '12px', fontWeight: 'bold',
+            cursor: 'pointer',
+            transition: 'all 0.3s',
+          }}
+        >
+          📡 운영 대시보드로 이동
+        </button>
       </form>
 
       {/* 진행 상태 */}
@@ -139,11 +156,11 @@ export default function QuestionPanel() {
                 <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.6)' }}>
                   ROUND {currentRound}
                 </span>
-                <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.3)' }}>/ MAX 4</span>
+                <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.3)' }}>/ MAX {displayTotalRounds}</span>
               </div>
               <div style={{ height: '2px', background: 'rgba(100,200,255,0.1)', borderRadius: '1px', marginBottom: '8px' }}>
                 <div style={{
-                  height: '100%', width: `${(currentRound / 4) * 100}%`,
+                  height: '100%', width: `${progressWidth}%`,
                   background: 'linear-gradient(90deg, #00aaff, #00ff88)',
                   borderRadius: '1px', transition: 'width 0.5s ease',
                 }} />

@@ -1,13 +1,13 @@
 import { callAI, callAIDebate, checkConsensus, generateFinalConsensus, angelSummarize } from './aiService';
-import { AI_GODS } from '../config/aiGods';
-import { saveDebate, saveDebateMessages, saveDebateMemory } from './memoryService';
+import { AI_GODS, AI_JUDGE } from '../config/aiGods';
+import { saveCompletedDebate } from './memoryService';
 import { syncDebateToObsidian } from './obsidianService';
 
 const IS_DEV = import.meta.env.DEV;
 
-// 로컬(Ollama): 최대 4라운드 / 프로덕션(Groq): 비용 절감을 위해 2라운드
-const MAX_ROUNDS = IS_DEV ? 4 : 2;
-const MIN_ROUNDS = IS_DEV ? 2 : 1;
+// 로컬(Ollama direct): 최대 4라운드 / 프로덕션(Groq): 비용 절감을 위해 2라운드
+export const MAX_ROUNDS = IS_DEV ? 4 : 2;
+export const MIN_ROUNDS = IS_DEV ? 2 : 1;
 const CALL_DELAY = IS_DEV ? 0 : 3000; // Groq만 딜레이 적용
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -48,6 +48,10 @@ export class DiscussionOrchestrator {
         console.error(`❌ ${god.name} Round 1:`, err);
       }
       await sleep(CALL_DELAY);
+    }
+
+    if (this.messages.filter(message => !message.type).length === 0) {
+      throw new Error('모든 AI 응답 생성에 실패했습니다. 잠시 후 다시 시도하세요.');
     }
 
     // ── Round 2 ~ MAX_ROUNDS: 동적 토론 ──────────────────
@@ -111,13 +115,18 @@ export class DiscussionOrchestrator {
         await sleep(CALL_DELAY);
       }
 
+      const roundMessages = this.messages.filter(m => m.round === round && !m.type);
+      if (roundMessages.length === 0) {
+        this._status(`⚠ Round ${round}에서 유효한 응답이 없어 토론을 종료합니다.`);
+        break;
+      }
+
       if (round >= MIN_ROUNDS) {
-        this._status('🤝 합의 달성 여부 확인 중...');
-        const roundMessages = this.messages.filter(m => m.round === round);
+        this._status(`🤝 ${AI_JUDGE.name}가 합의 달성 여부 확인 중...`);
         try {
           const reached = await checkConsensus(topic, roundMessages);
           if (reached) {
-            this._status(`✅ Round ${round}에서 합의 도달! 최종 결론 도출 중...`);
+            this._status(`✅ Round ${round}에서 합의 도달! ${AI_JUDGE.name}가 최종 결론을 정리 중...`);
             break;
           } else if (round < MAX_ROUNDS) {
             this._status(`💬 합의 미달 · Round ${round + 1} 진행...`);
@@ -128,38 +137,25 @@ export class DiscussionOrchestrator {
       }
     }
 
+    const spokenMessages = this.messages.filter(message => !message.type);
+    if (spokenMessages.length === 0) {
+      throw new Error('저장 가능한 토론 메시지가 없습니다.');
+    }
+
     // ── 최종 합의안 생성 ─────────────────────────────────
-    this._status('📊 최종 합의안 작성 중...');
-    const consensus = await generateFinalConsensus(topic, this.messages);
-    const totalRounds = Math.max(...this.messages.map(m => m.round));
+    this._status(`⚖️ ${AI_JUDGE.name}가 최종 합의안을 작성 중...`);
+    const consensus = await generateFinalConsensus(topic, spokenMessages);
+    const totalRounds = Math.max(...spokenMessages.map(m => m.round));
 
     // ── Supabase에 전체 토론 저장 ─────────────────────────
     this._status('🧠 Supabase에 저장 중...');
-    const debateId = await saveDebate({
+    const debateId = await saveCompletedDebate({
       topic,
       isYoutube: !!transcript,
       totalRounds,
       consensus,
+      messages: spokenMessages,
     });
-
-    if (debateId) {
-      // 모든 메시지 저장
-      await saveDebateMessages(debateId, this.messages);
-
-      // 각 신의 개별 메모리 저장 (메모리 진화 포함)
-      for (const god of AI_GODS) {
-        const myMessages = this.messages.filter(m => m.godId === god.id);
-        if (myMessages.length > 0) {
-          const lastMsg = myMessages[myMessages.length - 1];
-          await saveDebateMemory(god.id, {
-            topic,
-            content: lastMsg.content,
-            consensus,
-            debateId,
-          });
-        }
-      }
-    }
 
     // ── Obsidian에 노트 동기화 ────────────────────────────────
     this._status('📓 Obsidian에 기억 동기화 중...');
@@ -167,16 +163,16 @@ export class DiscussionOrchestrator {
       gods: AI_GODS,
       topic,
       debateId,
-      messages: this.messages,
+      messages: spokenMessages,
       consensus,
     }).catch(e => console.warn('Obsidian 동기화 스킵 (vault 미설정):', e.message));
 
     this._status('🎉 토론 완료!');
     if (this.onCompleteCallback) {
-      this.onCompleteCallback({ topic, messages: this.messages, consensus, totalRounds });
+      this.onCompleteCallback({ topic, debateId, messages: this.messages, consensus, totalRounds });
     }
 
-    return { topic, messages: this.messages, consensus, totalRounds };
+    return { topic, debateId, messages: this.messages, consensus, totalRounds };
   }
 }
 

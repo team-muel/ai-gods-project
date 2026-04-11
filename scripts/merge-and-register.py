@@ -7,9 +7,11 @@ LoRA 어댑터 → 베이스 모델 병합 → GGUF 변환 → Ollama 등록
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -26,6 +28,11 @@ OLLAMA_NAMES = {
 }
 
 BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+MODEL_RUN_ID = os.environ.get("MODEL_RUN_ID") or f"manual-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+DATASET_SNAPSHOT_ID = os.environ.get("DATASET_SNAPSHOT_ID") or ""
+SKIP_GGUF_CONVERSION = os.environ.get("SKIP_GGUF_CONVERSION", "").lower() in {"1", "true", "yes", "on"}
+SKIP_OLLAMA_REGISTER = os.environ.get("SKIP_OLLAMA_REGISTER", "").lower() in {"1", "true", "yes", "on"}
+MODEL_ARTIFACT_URI_BASE = os.environ.get("MODEL_ARTIFACT_URI_BASE") or ""
 
 GOD_SYSTEM_PROMPTS = {
     "cco": "당신은 Muse, AI 기업의 최고 창의 책임자(CCO)입니다. 창의성, 브랜드 스토리텔링 관점에서 분석합니다. 반드시 한국어로 답변하세요.",
@@ -37,6 +44,74 @@ GOD_SYSTEM_PROMPTS = {
     "cdo": "당신은 Oracle, AI 기업의 최고 데이터 책임자(CDO)입니다. 데이터 분석, 인사이트 관점에서 분석합니다. 반드시 한국어로 답변하세요.",
     "cto": "당신은 Nexus, AI 기업의 최고 기술 책임자(CTO)입니다. 기술 아키텍처, 실현 가능성 관점에서 분석합니다. 반드시 한국어로 답변하세요.",
 }
+
+
+def get_supabase_client():
+    try:
+        from supabase import create_client
+    except ImportError:
+        return None
+
+    supabase_url = os.environ.get("SUPABASE_URL") or os.environ.get("VITE_SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("VITE_SUPABASE_ANON_KEY")
+    if not supabase_url or not supabase_key:
+        return None
+
+    return create_client(supabase_url, supabase_key)
+
+
+def register_training_run(supabase, god_id, status, merged_path=None, gguf_path=None, error_message=""):
+    if not supabase:
+        return
+
+    payload = {
+        "run_id": MODEL_RUN_ID,
+        "agent_id": god_id,
+        "phase": "merge_register",
+        "status": status,
+        "dataset_snapshot_id": DATASET_SNAPSHOT_ID or None,
+        "base_model": BASE_MODEL,
+        "adapter_path": f"models/lora/{god_id}",
+        "output_path": str(gguf_path) if gguf_path else str(merged_path) if merged_path else None,
+        "metrics": {},
+        "metadata": {
+            "merged_path": str(merged_path) if merged_path else None,
+            "gguf_path": str(gguf_path) if gguf_path else None,
+            "error": error_message or None,
+        },
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        supabase.table("training_runs").upsert(payload, on_conflict="run_id,phase,agent_id").execute()
+    except Exception as error:
+        print(f"  [경고] training_runs 등록 스킵: {error}")
+
+
+def register_model_version(supabase, god_id, artifact_path=None, gguf_path=None, ollama_model_name=None):
+    if not supabase or (not artifact_path and not gguf_path):
+        return
+
+    payload = {
+        "agent_id": god_id,
+        "run_id": MODEL_RUN_ID,
+        "model_name": GOD_NAMES[god_id],
+        "ollama_model_name": ollama_model_name,
+        "base_model": BASE_MODEL,
+        "artifact_path": artifact_path,
+        "gguf_path": str(gguf_path) if gguf_path else None,
+        "rollout_state": "registered",
+        "is_active": False,
+        "metrics": {},
+        "metadata": {
+            "dataset_snapshot_id": DATASET_SNAPSHOT_ID or None,
+        },
+    }
+
+    try:
+        supabase.table("model_versions").upsert(payload, on_conflict="agent_id,run_id,model_name").execute()
+    except Exception as error:
+        print(f"  [경고] model_versions 등록 스킵: {error}")
 
 def merge_lora(god_id):
     import torch
@@ -139,16 +214,52 @@ def process_god(god_id):
 
     # 1. LoRA 병합
     merged_path = merge_lora(god_id)
+    artifact_path = f"{MODEL_ARTIFACT_URI_BASE.rstrip('/')}/{god_id}" if MODEL_ARTIFACT_URI_BASE else str(merged_path)
+
+    if SKIP_GGUF_CONVERSION:
+        print(f"  [{name}] 클라우드 모드: GGUF 변환 생략")
+        return {
+            "god_id": god_id,
+            "ok": True,
+            "merged_path": merged_path,
+            "gguf_path": None,
+            "artifact_path": artifact_path,
+            "ollama_model_name": None,
+            "error": "",
+        }
 
     # 2. GGUF 변환
     gguf_path = convert_to_gguf(god_id, merged_path)
     if not gguf_path:
         print(f"  [{name}] GGUF 변환 실패, 스킵")
-        return False
+        return {
+            "god_id": god_id,
+            "ok": False,
+            "merged_path": merged_path,
+            "gguf_path": None,
+            "artifact_path": artifact_path,
+            "ollama_model_name": None,
+            "error": "gguf conversion failed",
+        }
 
     # 3. Ollama 등록
-    ok = register_ollama(god_id, gguf_path)
-    return ok
+    if SKIP_OLLAMA_REGISTER:
+        print(f"  [{name}] 클라우드 모드: Ollama 등록 생략")
+        ok = True
+        ollama_model_name = None
+    else:
+        ok = register_ollama(god_id, gguf_path)
+        ollama_model_name = OLLAMA_NAMES[god_id]
+
+    return {
+        "god_id": god_id,
+        "ok": ok,
+        "merged_path": merged_path,
+        "gguf_path": gguf_path,
+        "artifact_path": artifact_path,
+        "ollama_model_name": ollama_model_name,
+        "error": "ollama register failed" if not ok else "",
+    }
 
 def main():
     parser = argparse.ArgumentParser()
@@ -156,11 +267,29 @@ def main():
     args = parser.parse_args()
 
     targets = GOD_IDS if args.god == "all" else [args.god]
+    supabase = get_supabase_client()
 
     success = []
     for god_id in targets:
-        if process_god(god_id):
+        result = process_god(god_id)
+        register_training_run(
+            supabase,
+            god_id,
+            "completed" if result["ok"] else "failed",
+            result["merged_path"],
+            result["gguf_path"],
+            result["error"],
+        )
+
+        if result["ok"]:
             success.append(GOD_NAMES[god_id])
+            register_model_version(
+                supabase,
+                god_id,
+                result.get("artifact_path"),
+                result["gguf_path"],
+                result.get("ollama_model_name"),
+            )
 
     print(f"\n[완료] {len(success)}/{len(targets)} 성공: {', '.join(success)}")
     if len(success) == len(targets):

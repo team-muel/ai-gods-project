@@ -1,43 +1,22 @@
 /**
- * Obsidian 자동 동기화 + Google Drive 업로드 감시자
+ * Obsidian 자동 동기화 감시자
  * 사용법: npm run watch-obsidian
  */
 
 const { createClient } = require('@supabase/supabase-js')
-const { google }       = require('googleapis')
 const fs   = require('fs')
 const path = require('path')
 
-const SUPABASE_URL     = process.env.VITE_SUPABASE_URL
-const SUPABASE_KEY     = process.env.VITE_SUPABASE_ANON_KEY
+const SUPABASE_URL     = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+const SUPABASE_KEY     = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY
 const VAULT_PATH       = process.env.OBSIDIAN_VAULT_PATH
-const GDRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GDRIVE_SA_JSON   = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
 
 if (!SUPABASE_URL || !SUPABASE_KEY || !VAULT_PATH) {
-  console.error('❌ .env에 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY / OBSIDIAN_VAULT_PATH 필요')
+  console.error('❌ .env에 SUPABASE_URL/VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY, OBSIDIAN_VAULT_PATH 필요')
   process.exit(1)
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
-
-// ── Google Drive 설정 (없으면 스킵) ───────────────────────────
-let driveClient = null
-if (GDRIVE_SA_JSON && GDRIVE_FOLDER_ID) {
-  try {
-    const sa = JSON.parse(GDRIVE_SA_JSON)
-    const auth = new google.auth.GoogleAuth({
-      credentials: sa,
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
-    })
-    driveClient = google.drive({ version: 'v3', auth })
-    console.log('☁️  Google Drive 연결됨')
-  } catch (e) {
-    console.warn('⚠️  Google Drive 설정 실패 (스킵):', e.message)
-  }
-} else {
-  console.log('ℹ️  GOOGLE_SERVICE_ACCOUNT_JSON 미설정 → Google Drive 스킵')
-}
 
 const GOD_NAMES = {
   cco: 'Muse', cso: 'Atlas', cpo: 'Forge', cmo: 'Mercury',
@@ -113,29 +92,6 @@ ${consensus || '(합의문 없음)'}
   return { fileName, content }
 }
 
-// ── Google Drive 업로드 ───────────────────────────────────────
-const uploadToDrive = async (fileName, content) => {
-  if (!driveClient || !content) return
-
-  try {
-    const { Readable } = require('stream')
-    await driveClient.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [GDRIVE_FOLDER_ID],
-        mimeType: 'text/markdown',
-      },
-      media: {
-        mimeType: 'text/markdown',
-        body: Readable.from([content]),
-      },
-    })
-    console.log(`  ☁️  Drive 업로드: ${fileName}`)
-  } catch (e) {
-    console.warn(`  ⚠️  Drive 업로드 실패: ${e.message}`)
-  }
-}
-
 // ── Realtime 구독 ────────────────────────────────────────────
 function startRealtime() {
   console.log('📡 Supabase Realtime 연결 중...')
@@ -178,7 +134,6 @@ function startRealtime() {
 
         if (content) {
           console.log(`  ✅ Obsidian 저장: ${fileName}`)
-          await uploadToDrive(fileName, content)
         } else {
           console.log(`  ⏭  이미 존재, 스킵`)
         }
@@ -194,14 +149,13 @@ function startRealtime() {
           })
           if (summary.content) {
             console.log(`  📋 요약 저장: ${summary.fileName}`)
-            await uploadToDrive(summary.fileName, summary.content)
           }
         }
       }
     )
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        console.log('✅ 연결 완료! Vercel 토론이 끝나면 자동으로 Obsidian + Drive에 저장됩니다.')
+        console.log('✅ 연결 완료! Vercel 토론이 끝나면 자동으로 Obsidian에 저장됩니다.')
         console.log('   (종료하려면 Ctrl+C)\n')
       } else if (status === 'CHANNEL_ERROR') {
         console.error('❌ Realtime 연결 실패. 30초 후 재시도...')

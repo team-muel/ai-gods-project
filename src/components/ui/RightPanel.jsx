@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AI_GODS } from '../../config/aiGods'
 import { useDiscussionStore } from '../../store/discussionStore'
+import { submitDebateFeedback } from '../../services/rewardLearningService'
 
 // 마크다운 기호 제거 (**, *, #, - 등)
 const cleanMarkdown = (text) =>
@@ -13,13 +14,46 @@ const cleanMarkdown = (text) =>
 
 
 export default function RightPanel({ selectedGod }) {
-  const { messages, topic, isDiscussing, consensus, currentRound, rounds, statusText } = useDiscussionStore()
+  const { messages, topic, isDiscussing, debateId, consensus, currentRound, totalRounds, statusText } = useDiscussionStore()
   const [activeTab, setActiveTab] = useState('log') // 'log' | 'consensus'
+  const [feedbackState, setFeedbackState] = useState({ direction: '', saving: false, message: '' })
+  const displayTotalRounds = Math.max(totalRounds || 0, currentRound || 0, 1)
 
   // 합의안 완료되면 자동으로 탭 전환
   const showConsensusTab = !!consensus
 
   const tab = showConsensusTab && activeTab === 'consensus' ? 'consensus' : activeTab
+
+  useEffect(() => {
+    setFeedbackState({ direction: '', saving: false, message: '' })
+  }, [debateId, consensus])
+
+  const handleFeedback = async (direction) => {
+    if (!debateId || feedbackState.saving || feedbackState.direction) return
+
+    try {
+      setFeedbackState({ direction: '', saving: true, message: '' })
+      const result = await submitDebateFeedback({ debateId, direction })
+      if (result?.rewardLearningReady === false || result?.skipped) {
+        setFeedbackState({
+          direction: 'skipped',
+          saving: false,
+          message: result.message || '보상학습 테이블이 아직 없어 피드백 저장은 건너뜁니다. 운영에는 영향이 없습니다.',
+        })
+        return
+      }
+
+      setFeedbackState({
+        direction,
+        saving: false,
+        message: direction === 'up'
+          ? `강화학습용 긍정 피드백 저장 완료 · ${result.updatedPairs || 0}개 pair 보정`
+          : `강화학습용 부정 피드백 저장 완료 · ${result.updatedPairs || 0}개 pair 보정`,
+      })
+    } catch (error) {
+      setFeedbackState({ direction: '', saving: false, message: error.message || '피드백 저장 실패' })
+    }
+  }
 
   return (
     <div
@@ -52,7 +86,7 @@ export default function RightPanel({ selectedGod }) {
         {/* 라운드 표시 */}
         {(isDiscussing || consensus) && (
           <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.4)' }}>
-            ROUND {currentRound}/{rounds}
+            ROUND {currentRound}/{displayTotalRounds}
           </span>
         )}
       </div>
@@ -131,6 +165,56 @@ export default function RightPanel({ selectedGod }) {
             </div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: 'rgba(255,255,255,0.85)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
               {consensus}
+            </div>
+            <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid rgba(0, 200, 100, 0.15)' }}>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100, 200, 255, 0.55)', letterSpacing: '0.16em', marginBottom: '8px' }}>
+                RL FEEDBACK
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback('up')}
+                  disabled={!debateId || feedbackState.saving || !!feedbackState.direction}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    borderRadius: '3px',
+                    border: '1px solid rgba(0, 255, 136, 0.35)',
+                    background: feedbackState.direction === 'up' ? 'rgba(0, 255, 136, 0.18)' : 'rgba(0, 80, 50, 0.18)',
+                    color: '#9bffd2',
+                    cursor: !debateId || feedbackState.saving || !!feedbackState.direction ? 'not-allowed' : 'pointer',
+                    fontFamily: 'Orbitron, sans-serif',
+                    fontSize: '9px',
+                    letterSpacing: '0.1em',
+                    opacity: !debateId || feedbackState.saving || !!feedbackState.direction ? 0.55 : 1,
+                  }}
+                >
+                  👍 좋은 결론
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback('down')}
+                  disabled={!debateId || feedbackState.saving || !!feedbackState.direction}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    borderRadius: '3px',
+                    border: '1px solid rgba(255, 120, 120, 0.35)',
+                    background: feedbackState.direction === 'down' ? 'rgba(255, 80, 80, 0.18)' : 'rgba(80, 10, 10, 0.18)',
+                    color: '#ffc2c2',
+                    cursor: !debateId || feedbackState.saving || !!feedbackState.direction ? 'not-allowed' : 'pointer',
+                    fontFamily: 'Orbitron, sans-serif',
+                    fontSize: '9px',
+                    letterSpacing: '0.1em',
+                    opacity: !debateId || feedbackState.saving || !!feedbackState.direction ? 0.55 : 1,
+                  }}
+                >
+                  👎 별로인 결론
+                </button>
+              </div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: feedbackState.message.includes('실패') ? '#ffb4b4' : 'rgba(200, 255, 230, 0.72)' }}>
+                {feedbackState.saving ? '피드백 저장 중...' : feedbackState.message || '최종 합의안에 대한 사람 피드백을 reward event와 preference pair 점수에 반영합니다.'}
+              </div>
             </div>
           </div>
         </div>
