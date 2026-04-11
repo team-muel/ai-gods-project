@@ -33,8 +33,29 @@ permissions:
   actions: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      can_run_readiness: ${{ steps.check.outputs.can_run_readiness }}
+
+    steps:
+      - name: 재학습 전제조건 확인
+        id: check
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "can_run_readiness=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::SUPABASE_SERVICE_ROLE_KEY 가 설정되어 재학습 파이프라인을 실행합니다."
+          else
+            echo "can_run_readiness=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SUPABASE_SERVICE_ROLE_KEY 가 없어 재학습 파이프라인을 정상 스킵합니다. 보안 강화 이후 자동 readiness/export 에는 service role secret 이 필요합니다."
+          fi
+
   readiness:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    needs: preflight
+    if: needs.preflight.outputs.can_run_readiness == 'true' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     outputs:
       ready_for_export: ${{ steps.readiness.outputs.ready_for_export }}
@@ -59,6 +80,7 @@ jobs:
         id: readiness
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: node scripts/check-training-readiness.mjs --out outputs/training-readiness.json
 
@@ -101,6 +123,7 @@ jobs:
         id: prepare
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -152,6 +175,7 @@ jobs:
       - name: 모델 병합 및 레지스트리 등록
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           MODEL_RUN_ID: gh-${{ github.run_id }}
           DATASET_SNAPSHOT_ID: ${{ needs.prepare-datasets.outputs.snapshot_id }}

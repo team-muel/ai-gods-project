@@ -25,11 +25,33 @@ const resolveEnv = (...keys) => keys.map((key) => process.env[key]).find(Boolean
 const errorText = (error) => [error?.message, error?.details, error?.hint]
   .filter(Boolean)
   .join(' ')
-  .toLowerCase()
+
+const normalizedErrorText = (error) => errorText(error).toLowerCase()
+
+const describeQueryFailure = (result, fallbackMessage = 'Supabase query failed') => {
+  const text = errorText(result?.error)
+  const qualifiers = [result?.error?.code, result?.status, result?.statusText]
+    .filter(Boolean)
+    .join(' ')
+
+  if (text && qualifiers) {
+    return `${text} (${qualifiers})`
+  }
+
+  if (text) {
+    return text
+  }
+
+  if (qualifiers) {
+    return qualifiers
+  }
+
+  return fallbackMessage
+}
 
 const isTableUnavailableError = (error, tableName) => {
   const code = String(error?.code || '').toUpperCase()
-  const text = errorText(error)
+  const text = normalizedErrorText(error)
 
   return [
     code === '42P01',
@@ -59,7 +81,7 @@ const safeCount = async (queryPromise, { optionalTableName = '' } = {}) => {
     if (optionalTableName && isTableUnavailableError(result.error, optionalTableName)) {
       return 0
     }
-    throw new Error(result.error.message)
+    throw new Error(describeQueryFailure(result, `${optionalTableName || 'table'} count query failed`))
   }
 
   return result.count || 0
@@ -73,7 +95,7 @@ const loadGodStats = async (supabase) => {
       return []
     }
 
-    throw new Error(result.error.message)
+    throw new Error(describeQueryFailure(result, 'god_stats query failed'))
   }
 
   return Array.isArray(result.data) ? result.data : []
@@ -141,7 +163,7 @@ const main = async () => {
 
   for (const result of [totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult]) {
     if (result.error) {
-      throw new Error(result.error.message)
+      throw new Error(describeQueryFailure(result, 'training readiness query failed'))
     }
   }
 
@@ -151,7 +173,7 @@ const main = async () => {
     if (isRewardLearningUnavailableError(recentPreferencePairsResult.error)) {
       rewardLearningEnabled = false
     } else {
-      throw new Error(recentPreferencePairsResult.error.message)
+      throw new Error(describeQueryFailure(recentPreferencePairsResult, 'preference_pairs query failed'))
     }
   } else {
     recentPreferencePairs7d = recentPreferencePairsResult.count || 0
