@@ -22,6 +22,24 @@ const parseArgs = () => {
 
 const resolveEnv = (...keys) => keys.map((key) => process.env[key]).find(Boolean) || ''
 
+const errorText = (error) => [error?.message, error?.details, error?.hint]
+  .filter(Boolean)
+  .join(' ')
+  .toLowerCase()
+
+const isTableUnavailableError = (error, tableName) => {
+  const code = String(error?.code || '').toUpperCase()
+  const text = errorText(error)
+
+  return [
+    code === '42P01',
+    code === 'PGRST205',
+    text.includes(`public.${tableName}`),
+    text.includes(tableName) && text.includes('does not exist'),
+    text.includes(tableName) && text.includes('schema cache'),
+  ].some(Boolean)
+}
+
 const parseThreshold = (name, fallback) => {
   const parsed = Number.parseInt(process.env[name] || '', 10)
   return Number.isNaN(parsed) ? fallback : parsed
@@ -33,6 +51,32 @@ const writeGithubOutputs = (outputs) => {
 
   const lines = Object.entries(outputs).map(([key, value]) => `${key}=${value}`)
   fs.appendFileSync(outputPath, `${lines.join('\n')}\n`, 'utf-8')
+}
+
+const safeCount = async (queryPromise, { optionalTableName = '' } = {}) => {
+  const result = await queryPromise
+  if (result.error) {
+    if (optionalTableName && isTableUnavailableError(result.error, optionalTableName)) {
+      return 0
+    }
+    throw new Error(result.error.message)
+  }
+
+  return result.count || 0
+}
+
+const loadGodStats = async (supabase) => {
+  const result = await supabase.from('god_stats').select('*')
+
+  if (result.error) {
+    if (isTableUnavailableError(result.error, 'god_stats')) {
+      return []
+    }
+
+    throw new Error(result.error.message)
+  }
+
+  return Array.isArray(result.data) ? result.data : []
 }
 
 const describeRecommendation = ({ readyForSft, readyForDpo, recommendedForTraining, minMemoriesAcrossGods, recentPreferencePairs7d, thresholds, rewardLearningEnabled }) => {
@@ -86,8 +130,8 @@ const main = async () => {
     },
   })
 
-  const [godStatsResult, totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult, recentPreferencePairsResult] = await Promise.all([
-    supabase.from('god_stats').select('god_id, total_debates, total_messages, avg_response_length, last_active'),
+  const [godStatsRows, totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult, recentPreferencePairsResult] = await Promise.all([
+    loadGodStats(supabase),
     supabase.from('debates').select('*', { count: 'exact', head: true }),
     supabase.from('debates').select('*', { count: 'exact', head: true }).not('consensus', 'is', null).neq('consensus', ''),
     supabase.from('debates').select('*', { count: 'exact', head: true }).gte('created_at', since7d.toISOString()),
@@ -95,7 +139,7 @@ const main = async () => {
     supabase.from('preference_pairs').select('*', { count: 'exact', head: true }).eq('status', 'ready').gte('created_at', since7d.toISOString()),
   ])
 
-  for (const result of [godStatsResult, totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult]) {
+  for (const result of [totalDebatesResult, consensusDebatesResult, recentDebatesResult, recentMessagesResult]) {
     if (result.error) {
       throw new Error(result.error.message)
     }
@@ -113,20 +157,21 @@ const main = async () => {
     recentPreferencePairs7d = recentPreferencePairsResult.count || 0
   }
 
-  const statsByGod = new Map((godStatsResult.data || []).map((row) => [row.god_id, row]))
+  const statsByGod = new Map((godStatsRows || []).map((row) => [row.god_id, row]))
   const byGod = await Promise.all(
     GOD_IDS.map(async (godId) => {
-      const [activeMemoriesResult, recentMessagesByGodResult, recentImmuneResult] = await Promise.all([
-        supabase.from('god_memories').select('*', { count: 'exact', head: true }).eq('god_id', godId).eq('status', 'active'),
-        supabase.from('debate_messages').select('*', { count: 'exact', head: true }).eq('god_id', godId).gte('created_at', since7d.toISOString()),
-        supabase.from('immune_logs').select('*', { count: 'exact', head: true }).eq('agent_id', godId).gte('created_at', since7d.toISOString()),
+      const [activeMemories, recentMessagesByGod, recentImmune] = await Promise.all([
+        safeCount(
+          supabase.from('god_memories').select('*', { count: 'exact', head: true }).eq('god_id', godId).eq('status', 'active'),
+        ),
+        safeCount(
+          supabase.from('debate_messages').select('*', { count: 'exact', head: true }).eq('god_id', godId).gte('created_at', since7d.toISOString()),
+        ),
+        safeCount(
+          supabase.from('immune_logs').select('*', { count: 'exact', head: true }).eq('agent_id', godId).gte('created_at', since7d.toISOString()),
+          { optionalTableName: 'immune_logs' },
+        ),
       ])
-
-      for (const result of [activeMemoriesResult, recentMessagesByGodResult, recentImmuneResult]) {
-        if (result.error) {
-          throw new Error(result.error.message)
-        }
-      }
 
       const stats = statsByGod.get(godId) || {}
       return {
@@ -135,9 +180,9 @@ const main = async () => {
         totalMessages: Number(stats.total_messages || 0),
         avgResponseLength: Number(stats.avg_response_length || 0),
         lastActive: stats.last_active || null,
-        activeMemories: activeMemoriesResult.count || 0,
-        recentMessages7d: recentMessagesByGodResult.count || 0,
-        immuneEvents7d: recentImmuneResult.count || 0,
+        activeMemories,
+        recentMessages7d: recentMessagesByGod,
+        immuneEvents7d: recentImmune,
       }
     })
   )

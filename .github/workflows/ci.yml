@@ -58,7 +58,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: npm run audit:supabase-access
+        run: node scripts/audit-supabase-access.mjs --out outputs/supabase-access-audit.json
 
       - name: 익명 읽기 노출 차단 확인
         run: |

@@ -104,7 +104,7 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: npm run prepare:training-data
+        run: node scripts/prepare-training-datasets.mjs
 
       - name: 데이터셋 아티팩트 업로드
         uses: actions/upload-artifact@v4
@@ -201,7 +201,7 @@ jobs:
           REMOTE_TRAINING_WEBHOOK_URL: ${{ secrets.REMOTE_TRAINING_WEBHOOK_URL }}
           REMOTE_TRAINING_BEARER_TOKEN: ${{ secrets.REMOTE_TRAINING_BEARER_TOKEN }}
           REMOTE_TRAINING_SIGNED_URL_EXPIRES_IN: ${{ vars.REMOTE_TRAINING_SIGNED_URL_EXPIRES_IN }}
-        run: npm run train:remote-trigger -- --manifest outputs/training-datasets-manifest.json --readiness outputs/training-readiness.json
+        run: node scripts/trigger-remote-training.mjs --manifest outputs/training-datasets-manifest.json --readiness outputs/training-readiness.json
 
       - name: 원격 학습 요청 리포트 업로드
         uses: actions/upload-artifact@v4
