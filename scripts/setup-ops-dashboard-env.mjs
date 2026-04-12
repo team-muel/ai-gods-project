@@ -60,6 +60,9 @@ const githubOwner = resolveEnv('GITHUB_REPO_OWNER', 'VERCEL_GIT_REPO_OWNER') || 
 const githubRepo = resolveEnv('GITHUB_REPO_NAME', 'VERCEL_GIT_REPO_SLUG') || gitRemote.repo || 'ai-gods-project'
 
 const runtimeVars = [
+  { key: 'SUPABASE_URL', value: resolveEnv('SUPABASE_URL', 'VITE_SUPABASE_URL') },
+  { key: 'SUPABASE_ANON_KEY', value: resolveEnv('SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY') },
+  { key: 'SUPABASE_SERVICE_ROLE_KEY', value: resolveEnv('SUPABASE_SERVICE_ROLE_KEY') },
   { key: 'GITHUB_REPO_OWNER', value: githubOwner },
   { key: 'GITHUB_REPO_NAME', value: githubRepo },
   { key: 'VERCEL_PROJECT_NAME', value: resolveEnv('VERCEL_PROJECT_NAME') || vercelLink.projectName || projectIdOrName },
