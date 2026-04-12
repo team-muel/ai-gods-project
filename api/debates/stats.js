@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   if (!enforceRateLimit(req, res, { bucket: 'debate-stats', limit: 60, windowMs: 10 * 60 * 1000 })) return
 
   try {
-    const supabase = getSupabaseServerClient()
+    const supabase = getSupabaseServerClient({ allowAnonFallback: true })
     const { count: totalDebates, error: totalError } = await supabase
       .from('debates')
       .select('*', { count: 'exact', head: true })
