@@ -154,6 +154,21 @@ jobs:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
 
+      - name: 이전 학습 산출물 정리
+        if: runner.os == 'Windows'
+        run: |
+          @(
+            'models/lora',
+            'models/dpo',
+            'models/merged',
+            'models/gguf'
+          ) | ForEach-Object {
+            if (Test-Path $_) {
+              Remove-Item $_ -Recurse -Force
+            }
+          }
+          Get-PSDrive C | Select-Object Name, Used, Free
+
       - name: Python 설정
         uses: actions/setup-python@v5
         with:

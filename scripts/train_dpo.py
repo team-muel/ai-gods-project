@@ -16,6 +16,7 @@ generate_dpo_data.py로 생성한 dpo-data/{god_id}.jsonl을 읽어
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -115,6 +116,8 @@ def train_dpo(god_id: str):
 
     # ── DPO 학습 ──────────────────────────────────────────────
     out_dir = Path(DPO_OUT_DIR) / god_id
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     dpo_config = DPOConfig(
@@ -125,7 +128,7 @@ def train_dpo(god_id: str):
         learning_rate=5e-5,
         bf16=True,
         logging_steps=5,
-        save_strategy="epoch",
+        save_strategy="no",
         optim="paged_adamw_8bit",
         beta=0.1,             # KL 페널티 강도 (낮을수록 보상 중심)
         max_length=1024,

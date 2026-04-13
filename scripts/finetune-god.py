@@ -11,6 +11,7 @@ PEFT + QLoRA 신별 파인튜닝 스크립트 (RTX 3060 12GB, Windows 호환)
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
@@ -115,6 +116,8 @@ def finetune(god_id):
 
     # 출력 경로
     lora_out = Path(f"models/lora/{god_id}")
+    if lora_out.exists():
+        shutil.rmtree(lora_out)
     lora_out.mkdir(parents=True, exist_ok=True)
 
     # 학습
@@ -131,7 +134,7 @@ def finetune(god_id):
             learning_rate=2e-4,
             bf16=True,
             logging_steps=5,
-            save_strategy="epoch",
+            save_strategy="no",
             optim="paged_adamw_8bit",
             warmup_steps=5,
             lr_scheduler_type="cosine",
