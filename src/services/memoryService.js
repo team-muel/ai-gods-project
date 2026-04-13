@@ -141,6 +141,7 @@ export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, conse
       isYoutube,
       totalRounds,
       consensus,
+      physioLogged: true,
       messages,
     })
     return data?.debateId || null

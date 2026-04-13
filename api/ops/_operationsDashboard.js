@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { AI_GODS } from '../../src/config/aiGods.js'
+import { buildPhysioLogs } from '../../src/lib/physioMetrics.js'
 
 export const DASHBOARD_WINDOW_HOURS = 24
 export const DEFAULT_DASHBOARD_PAGE_SIZE = 12
@@ -120,6 +121,42 @@ const normalizeDebate = (debate) => ({
   isYoutube: Boolean(debate.is_youtube),
 })
 
+const buildDerivedPhysioRows = ({ messages, debateTopicsById }) => {
+  const groupedByDebateId = new Map()
+
+  for (const message of messages) {
+    const debateId = message.debate_id
+    if (!debateId) continue
+    if (!groupedByDebateId.has(debateId)) {
+      groupedByDebateId.set(debateId, [])
+    }
+    groupedByDebateId.get(debateId).push({
+      god_id: message.god_id,
+      god_name: message.god_name,
+      round: message.round,
+      content: message.content,
+      created_at: message.created_at,
+    })
+  }
+
+  const derived = { neuroRows: [], arousalRows: [], immuneRows: [] }
+
+  for (const [debateId, debateMessages] of groupedByDebateId.entries()) {
+    const topic = debateTopicsById.get(debateId) || ''
+    const { neuroRows, arousalRows, immuneRows } = buildPhysioLogs({
+      debateId,
+      topic,
+      messages: debateMessages,
+      source: 'ops_dashboard_fallback',
+    })
+    derived.neuroRows.push(...neuroRows)
+    derived.arousalRows.push(...arousalRows)
+    derived.immuneRows.push(...immuneRows)
+  }
+
+  return derived
+}
+
 const getDebateMetrics = async ({ env, since, page, pageSize }) => {
   const supabase = createSupabaseClient(env)
   if (!supabase) {
@@ -200,7 +237,7 @@ const buildCutoverDecision = (metrics) => {
     return {
       score,
       readiness: 'ready',
-      recommendation: 'Groq와 병렬 비교를 끝내면 개별 에이전트 cutover 후보로 올릴 수 있습니다.',
+      recommendation: '자체 추론 스택 기준으로 즉시 운영 가능한 후보입니다. 마지막 품질 회귀 점검만 남았습니다.',
     }
   }
 
@@ -223,7 +260,7 @@ const buildCutoverDecision = (metrics) => {
   return {
     score,
     readiness: 'shadow',
-    recommendation: '현 시점에서는 Groq 보조 없이 운영하기 이릅니다. 학습 데이터와 최근 활동량이 더 필요합니다.',
+    recommendation: '아직은 관찰 단계입니다. 최근 활동량과 검역 안정성을 더 쌓아야 합니다.',
   }
 }
 
@@ -239,11 +276,16 @@ const getAgentMetrics = async ({ env, since }) => {
     }
   }
 
-  const [godStatsResult, recentMessagesResult, memoriesResult, neuroResult, arousalResult, immuneResult] = await Promise.all([
+  const [godStatsResult, recentMessagesResult, recentDebatesResult, memoriesResult, neuroResult, arousalResult, immuneResult] = await Promise.all([
     supabase.from('god_stats').select('god_id, total_debates, total_messages, last_active'),
     supabase
       .from('debate_messages')
-      .select('god_id, debate_id, content, created_at')
+      .select('god_id, god_name, round, debate_id, content, created_at')
+      .gte('created_at', since.toISOString())
+      .range(0, 1999),
+    supabase
+      .from('debates')
+      .select('id, topic, created_at')
       .gte('created_at', since.toISOString())
       .range(0, 1999),
     supabase
@@ -277,16 +319,18 @@ const getAgentMetrics = async ({ env, since }) => {
     ),
   ])
 
-  for (const result of [godStatsResult, recentMessagesResult, memoriesResult, neuroResult, arousalResult, immuneResult]) {
+  for (const result of [godStatsResult, recentMessagesResult, recentDebatesResult, memoriesResult, neuroResult, arousalResult, immuneResult]) {
     if (result.error) throw new Error(result.error.message)
   }
 
   const godStatsById = new Map((godStatsResult.data || []).map((row) => [row.god_id, row]))
   const recentMessages = recentMessagesResult.data || []
+  const debateTopicsById = new Map((recentDebatesResult.data || []).map((row) => [row.id, row.topic || '']))
   const memories = memoriesResult.data || []
   const neuroLogs = neuroResult.data || []
   const arousalLogs = arousalResult.data || []
   const immuneLogs = immuneResult.data || []
+  const derivedPhysioRows = buildDerivedPhysioRows({ messages: recentMessages, debateTopicsById })
 
   const members = AI_GODS.map((agent) => {
     const baseStats = godStatsById.get(agent.id) || {}
@@ -295,17 +339,23 @@ const getAgentMetrics = async ({ env, since }) => {
     const agentNeuro = neuroLogs.filter((row) => row.agent_id === agent.id)
     const agentArousal = arousalLogs.filter((row) => row.agent_id === agent.id)
     const agentImmune = immuneLogs.filter((row) => row.agent_id === agent.id)
+    const fallbackNeuro = derivedPhysioRows.neuroRows.filter((row) => row.agent_id === agent.id)
+    const fallbackArousal = derivedPhysioRows.arousalRows.filter((row) => row.agent_id === agent.id)
+    const fallbackImmune = derivedPhysioRows.immuneRows.filter((row) => row.agent_id === agent.id)
+    const effectiveNeuro = agentNeuro.length > 0 ? agentNeuro : fallbackNeuro
+    const effectiveArousal = agentArousal.length > 0 ? agentArousal : fallbackArousal
+    const effectiveImmune = agentImmune.length > 0 ? agentImmune : fallbackImmune
 
     const recentDebates24h = new Set(agentMessages.map((row) => row.debate_id)).size
     const recentMessages24h = agentMessages.length
-    const quarantineCount24h = agentImmune.filter((row) => row.status === 'quarantined').length
+    const quarantineCount24h = effectiveImmune.filter((row) => row.status === 'quarantined').length
     const quarantineRate24h = recentMessages24h > 0 ? quarantineCount24h / recentMessages24h : 0
     const avgRecentResponseLength = average(agentMessages.map((row) => String(row.content || '').length))
-    const avgDopamine24h = average(agentNeuro.map((row) => row.dopamine))
-    const avgCortisol24h = average(agentNeuro.map((row) => row.cortisol))
-    const avgHeartRate24h = average(agentArousal.map((row) => row.heart_rate))
-    const burstRate24h = agentArousal.length > 0
-      ? agentArousal.filter((row) => Boolean(row.burst)).length / agentArousal.length
+    const avgDopamine24h = average(effectiveNeuro.map((row) => row.dopamine))
+    const avgCortisol24h = average(effectiveNeuro.map((row) => row.cortisol))
+    const avgHeartRate24h = average(effectiveArousal.map((row) => row.heart_rate))
+    const burstRate24h = effectiveArousal.length > 0
+      ? effectiveArousal.filter((row) => Boolean(row.burst)).length / effectiveArousal.length
       : 0
 
     const metrics = {
@@ -331,9 +381,9 @@ const getAgentMetrics = async ({ env, since }) => {
       avgCortisol24h: roundMetric(avgCortisol24h, 2) || 0,
       avgHeartRate24h: roundMetric(avgHeartRate24h, 2) || 0,
       burstRate24h: roundMetric(burstRate24h, 2) || 0,
-      neuroSamples24h: agentNeuro.length,
-      arousalSamples24h: agentArousal.length,
-      immuneEvents24h: agentImmune.length,
+      neuroSamples24h: effectiveNeuro.length,
+      arousalSamples24h: effectiveArousal.length,
+      immuneEvents24h: effectiveImmune.length,
     }
 
     const cutover = buildCutoverDecision(metrics)
@@ -350,17 +400,17 @@ const getAgentMetrics = async ({ env, since }) => {
   const candidateCount = members.filter((member) => member.cutoverReadiness === 'candidate').length
 
   let overallReadiness = 'not_ready'
-  let recommendation = '현재는 Groq를 기준으로 운영하고, 자체 모델은 shadow mode 비교를 유지하는 편이 안전합니다.'
+  let recommendation = '현재 운영은 자체 AI 기준이며, 점수가 낮은 역할은 품질 회귀 모니터링과 데이터 축적이 더 필요합니다.'
 
   if (readyCount === members.length && averageScore >= 80) {
     overallReadiness = 'cutover_ready'
-    recommendation = '8개 역할 모두 점수가 충분합니다. Groq와의 마지막 회귀 비교 후 cutover 검토가 가능합니다.'
+    recommendation = '8개 역할 모두 점수가 충분합니다. 자체 AI full cutover 상태를 유지해도 됩니다.'
   } else if (readyCount + candidateCount === members.length && averageScore >= 65) {
     overallReadiness = 'pilot_ready'
     recommendation = '전 역할이 candidate 이상입니다. 일부 트래픽만 자체 모델로 보내는 pilot 단계에 들어갈 수 있습니다.'
   } else if (readyCount + candidateCount >= 4) {
     overallReadiness = 'shadow_mode'
-    recommendation = '절반 이상이 후보권입니다. Groq 병행 상태에서 역할별 shadow evaluation을 진행하면 됩니다.'
+    recommendation = '절반 이상이 후보권입니다. 역할별 품질 회귀 모니터링을 계속하면서 점진적으로 확대하면 됩니다.'
   }
 
   return {

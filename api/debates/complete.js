@@ -1,8 +1,28 @@
 import { classifyRelationship, keywordSimilarity } from '../../src/lib/memoryScoring.js'
+import { buildPhysioLogs } from '../../src/lib/physioMetrics.js'
 import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../../src/lib/rewardLearning.js'
 import { enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 import { isVirtualWarehouseUnavailableError, persistDebateArchive } from '../_virtualWarehouse.js'
+
+const isMissingRelationError = (error) => {
+  const message = String(error?.message || '')
+  return message.includes('Could not find the table') || message.includes('does not exist')
+}
+
+const insertRowsBestEffort = async (supabase, table, rows, label) => {
+  if (!rows.length) return
+
+  const { error } = await supabase.from(table).insert(rows)
+  if (!error) return
+
+  if (isMissingRelationError(error)) {
+    console.warn(`[debates/complete] ${table} 테이블이 없어 ${label} 저장을 건너뜁니다.`)
+    return
+  }
+
+  console.warn(`[debates/complete] ${label} 저장 경고:`, error.message)
+}
 
 const saveDebateMemory = async (supabase, godId, { topic, content, consensus, debateId }) => {
   const { data: newMemory, error } = await supabase
@@ -91,6 +111,7 @@ export default async function handler(req, res) {
   const topic = String(body?.topic || '').trim().slice(0, 200)
   const consensus = String(body?.consensus || '').trim().slice(0, 4000)
   const isYoutube = Boolean(body?.isYoutube)
+  const physioLogged = Boolean(body?.physioLogged)
   const totalRounds = Number.isFinite(Number(body?.totalRounds)) ? Math.max(1, Number(body.totalRounds)) : 1
   const spokenMessages = Array.isArray(body?.messages)
     ? body.messages
@@ -140,6 +161,19 @@ export default async function handler(req, res) {
     const { error: messageError } = await supabase.from('debate_messages').insert(messageRows)
     if (messageError) {
       throw new Error(messageError.message || '메시지 저장에 실패했습니다.')
+    }
+
+    if (!physioLogged) {
+      const { neuroRows, arousalRows, immuneRows } = buildPhysioLogs({
+        debateId,
+        topic,
+        messages: spokenMessages,
+        source: 'api_debate_complete',
+      })
+
+      await insertRowsBestEffort(supabase, 'neuro_logs', neuroRows, 'neuro 로그')
+      await insertRowsBestEffort(supabase, 'arousal_logs', arousalRows, 'arousal 로그')
+      await insertRowsBestEffort(supabase, 'immune_logs', immuneRows, 'immune 로그')
     }
 
     const latestMessageByGod = new Map()
