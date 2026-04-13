@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 
+def truthy(value, default=False):
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def run_step(command, extra_env=None):
     env = os.environ.copy()
     if extra_env:
@@ -26,6 +32,7 @@ def main():
     parser.add_argument("--god", default="all")
     parser.add_argument("--skip-dpo", action="store_true")
     parser.add_argument("--skip-publish", action="store_true")
+    parser.add_argument("--skip-activation", action="store_true")
     parser.add_argument("--include-merged", action="store_true")
     args = parser.parse_args()
 
@@ -68,6 +75,15 @@ def main():
             "PUBLISH_INCLUDE_DPO": "0" if args.skip_dpo else "1",
         }
         run_step(command, extra_env)
+
+    should_activate = truthy(os.environ.get("POST_TRAIN_ACTIVATE_STACK", "1"), default=True)
+    if not args.skip_activation and should_activate:
+        run_step([
+            sys.executable,
+            "scripts/activate-serving-stack.py",
+            "--run-id",
+            os.environ.get("MODEL_RUN_ID", "manual-run"),
+        ])
 
 
 if __name__ == "__main__":

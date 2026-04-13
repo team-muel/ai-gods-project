@@ -9,20 +9,35 @@ import {
 
 const BASE_URL = String(process.env.VALIDATION_BASE_URL || 'http://127.0.0.1:5173').trim().replace(/\/$/, '')
 const DEFAULT_TOPIC = process.env.VALIDATION_TOPIC || 'AI 기반 고객 서비스 자동화 전략'
+const readPositiveInt = (value, fallback, minimum = 1) => {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isNaN(parsed) ? fallback : Math.max(minimum, parsed)
+}
+const isEnabled = (value, fallback = false) => {
+  const normalized = String(value ?? (fallback ? 'true' : 'false')).trim().toLowerCase()
+  return !['0', 'false', 'no', 'off'].includes(normalized)
+}
 const MAX_ROUNDS = Math.max(2, Math.min(4, Number.parseInt(process.env.VALIDATION_MAX_ROUNDS || '2', 10) || 2))
-const ROUND_MAX_TOKENS = Math.max(24, Number.parseInt(process.env.VALIDATION_ROUND_MAX_TOKENS || '96', 10) || 96)
-const ANGEL_MAX_TOKENS = Math.max(16, Number.parseInt(process.env.VALIDATION_ANGEL_MAX_TOKENS || '48', 10) || 48)
-const FINAL_MAX_TOKENS = Math.max(64, Number.parseInt(process.env.VALIDATION_FINAL_MAX_TOKENS || '160', 10) || 160)
+const ROUND_MAX_TOKENS = readPositiveInt(process.env.VALIDATION_ROUND_MAX_TOKENS, 72, 24)
+const ANGEL_MAX_TOKENS = readPositiveInt(process.env.VALIDATION_ANGEL_MAX_TOKENS, 32, 16)
+const FINAL_MAX_TOKENS = readPositiveInt(process.env.VALIDATION_FINAL_MAX_TOKENS, 120, 64)
 const SEARCH_NUM = Math.max(1, Math.min(6, Number.parseInt(process.env.VALIDATION_SEARCH_NUM || '4', 10) || 4))
 const OUTPUT_PATH = path.resolve(process.cwd(), process.env.VALIDATION_OUTPUT_PATH || 'outputs/orchestrator-validation.json')
-const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 간결하게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
+const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점 2개만 짧게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
+const COMPACT_PROMPTS = isEnabled(process.env.VALIDATION_COMPACT_PROMPTS, true)
+const ANGEL_SOURCE_CHARS = readPositiveInt(process.env.VALIDATION_ANGEL_SOURCE_CHARS, 360, 120)
+const DEBATE_CONTEXT_CHARS = readPositiveInt(process.env.VALIDATION_DEBATE_CONTEXT_CHARS, 220, 80)
+const CONSENSUS_CONTEXT_CHARS = readPositiveInt(process.env.VALIDATION_CONSENSUS_CONTEXT_CHARS, 90, 40)
+const FINAL_CONTEXT_CHARS = readPositiveInt(process.env.VALIDATION_FINAL_CONTEXT_CHARS, 110, 60)
+const TRANSCRIPT_CONTEXT_CHARS = readPositiveInt(process.env.VALIDATION_TRANSCRIPT_CONTEXT_CHARS, 1200, 400)
+const FINAL_USE_LAST_ROUND_ONLY = isEnabled(process.env.VALIDATION_FINAL_USE_LAST_ROUND_ONLY, true)
 const REQUESTED_AGENT_IDS = String(process.env.VALIDATION_AGENT_IDS || '')
   .split(',')
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean)
-const USE_MEMORIES = !['0', 'false', 'no', 'off'].includes(String(process.env.VALIDATION_USE_MEMORIES || 'false').trim().toLowerCase())
-const USE_SEARCH = !['0', 'false', 'no', 'off'].includes(String(process.env.VALIDATION_USE_SEARCH || 'false').trim().toLowerCase())
-const USE_OBSIDIAN = !['0', 'false', 'no', 'off'].includes(String(process.env.VALIDATION_USE_OBSIDIAN || 'false').trim().toLowerCase())
+const USE_MEMORIES = isEnabled(process.env.VALIDATION_USE_MEMORIES, false)
+const USE_SEARCH = isEnabled(process.env.VALIDATION_USE_SEARCH, false)
+const USE_OBSIDIAN = isEnabled(process.env.VALIDATION_USE_OBSIDIAN, false)
 const REQUEST_HEADERS = {
   Accept: 'application/json',
   Origin: BASE_URL,
@@ -31,6 +46,7 @@ const REQUEST_HEADERS = {
 }
 
 const normalize = (text) => String(text || '').replace(/\s+/g, ' ').trim()
+const trimForPrompt = (value, limit) => normalize(value).slice(0, limit)
 
 const extractAssistantContent = (data) => (
   data?.message?.content ||
@@ -141,7 +157,7 @@ const buildInitialUserMessage = ({ topic, transcript, memoryContext, obsidianCon
     return [
       memoryContext,
       obsidianContext,
-      `다음은 YouTube 영상의 내용입니다:\n\n"${String(transcript).slice(0, 2000)}"\n\n위 영상에 대해 당신의 전문 분야 관점에서 분석하고 초기 의견을 제시하세요.`,
+      `다음은 YouTube 영상의 내용입니다:\n\n"${String(transcript).slice(0, TRANSCRIPT_CONTEXT_CHARS)}"\n\n위 영상에 대해 당신의 전문 분야 관점에서 분석하고 초기 의견을 제시하세요.`,
     ].filter(Boolean).join('\n\n')
   }
 
@@ -166,7 +182,7 @@ const callInitialOpinion = async ({ agent, topic, transcript, searchContext }) =
   const result = await requestChat({
     agentId: agent.id,
     phase: 'initial',
-    systemPrompt: buildCouncilSystemPrompt(agent.id, 'initial'),
+    systemPrompt: buildCouncilSystemPrompt(agent.id, 'initial', { compact: COMPACT_PROMPTS }),
     userMessage: buildInitialUserMessage({
       topic,
       transcript,
@@ -199,10 +215,10 @@ const callAngelSummary = async (message) => {
     agentId: AI_JUDGE.id,
     phase: 'judge-final',
     systemPrompt: ANGEL_SYSTEM_PROMPT,
-    userMessage: `[${message.god}의 의견]\n${message.content.slice(0, 600)}\n\n위 의견의 핵심 주장 3가지를 불릿 포인트(•)로 간결하게 요약하세요.`,
+    userMessage: `[${message.god}의 의견]\n${trimForPrompt(message.content, ANGEL_SOURCE_CHARS)}\n\n위 의견의 핵심 주장 2가지를 불릿 포인트(•)로 간결하게 요약하세요.`,
     maxTokens: ANGEL_MAX_TOKENS,
-    temperature: 0.5,
-    topP: 0.9,
+    temperature: 0.4,
+    topP: 0.8,
   })
 
   return {
@@ -225,13 +241,13 @@ const callAngelSummary = async (message) => {
 
 const callDebateOpinion = async ({ agent, topic, otherOpinions, round }) => {
   const opinionsText = otherOpinions
-    .map((opinion) => `[${opinion.god}]: ${opinion.content}`)
+    .map((opinion) => `[${opinion.god}]: ${trimForPrompt(opinion.content, DEBATE_CONTEXT_CHARS)}`)
     .join('\n\n')
 
   const result = await requestChat({
     agentId: agent.id,
     phase: 'debate',
-    systemPrompt: buildCouncilSystemPrompt(agent.id, 'debate'),
+    systemPrompt: buildCouncilSystemPrompt(agent.id, 'debate', { compact: COMPACT_PROMPTS }),
     userMessage: `주제: ${topic}\n\n다른 임원들의 의견:\n${opinionsText}\n\n위 의견들에 대해 동의/반박/보완하며 토론하세요. 누구의 의견에 반응하는지 구체적으로 언급하세요.`,
     maxTokens: ROUND_MAX_TOKENS,
   })
@@ -255,13 +271,13 @@ const callDebateOpinion = async ({ agent, topic, otherOpinions, round }) => {
 
 const checkConsensus = async (topic, roundMessages) => {
   const summary = roundMessages
-    .map((message) => `[${message.god}]: ${message.content.slice(0, 120)}`)
+    .map((message) => `[${message.god}]: ${trimForPrompt(message.content, CONSENSUS_CONTEXT_CHARS)}`)
     .join('\n')
 
   const result = await requestChat({
     agentId: AI_JUDGE.id,
     phase: 'judge-consensus',
-    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-consensus'),
+    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-consensus', { compact: COMPACT_PROMPTS }),
     userMessage: `토론 주제: ${topic}\n\n최근 발언:\n${summary}\n\n이 토론에서 충분한 합의가 도출되었습니까? "예" 또는 "아니오"로만 답하세요.`,
     maxTokens: 10,
     temperature: 0.2,
@@ -282,15 +298,19 @@ const checkConsensus = async (topic, roundMessages) => {
 }
 
 const generateFinalConsensus = async (topic, spokenMessages) => {
-  const summary = spokenMessages
-    .map((message) => `[${message.god} R${message.round}]: ${message.content}`)
-    .join('\n\n')
+  const finalRound = Math.max(...spokenMessages.map((message) => message.round || 1))
+  const relevantMessages = FINAL_USE_LAST_ROUND_ONLY
+    ? spokenMessages.filter((message) => message.round === finalRound)
+    : spokenMessages
+  const summary = relevantMessages
+    .map((message) => `[${message.god}${FINAL_USE_LAST_ROUND_ONLY ? '' : ` R${message.round}` }]: ${trimForPrompt(message.content, FINAL_CONTEXT_CHARS)}`)
+    .join('\n')
 
   const result = await requestChat({
     agentId: AI_JUDGE.id,
     phase: 'judge-final',
-    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-final'),
-    userMessage: `주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`,
+    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-final', { compact: COMPACT_PROMPTS }),
+    userMessage: `주제: ${topic}\n\n${FINAL_USE_LAST_ROUND_ONLY ? '최종 라운드 요약' : '토론 요약'}:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`,
     maxTokens: FINAL_MAX_TOKENS,
     temperature: 0.2,
     topP: 0.65,

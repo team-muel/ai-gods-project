@@ -8,7 +8,7 @@ const IS_DEV = import.meta.env.DEV;
 // 로컬 직접 서빙: 최대 4라운드 / 원격 운영: 비용과 지연을 고려해 2라운드
 export const MAX_ROUNDS = IS_DEV ? 4 : 2;
 export const MIN_ROUNDS = IS_DEV ? 2 : 1;
-const CALL_DELAY = IS_DEV ? 0 : 3000; // 원격 운영 환경만 딜레이 적용
+const CALL_DELAY = IS_DEV ? 0 : Math.max(0, Number.parseInt(import.meta.env.VITE_ORCHESTRATOR_CALL_DELAY_MS || '1000', 10) || 1000); // 원격 운영 환경만 딜레이 적용
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
