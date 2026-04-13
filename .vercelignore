@@ -1,0 +1,15 @@
+.env
+.env.*
+.venv
+.vercel
+node_modules
+dist
+build
+outputs
+models
+third_party
+warehouse
+__pycache__
+*.pyc
+*.pyo
+*.log
