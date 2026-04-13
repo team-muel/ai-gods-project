@@ -1,5 +1,6 @@
 import { classifyRelationship, keywordSimilarity } from '../../src/lib/memoryScoring.js'
 import { buildPhysioLogs } from '../../src/lib/physioMetrics.js'
+import { maybeTriggerOnlineLearning } from '../../src/lib/onlineLearning.js'
 import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../../src/lib/rewardLearning.js'
 import { enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
@@ -226,7 +227,21 @@ export default async function handler(req, res) {
       console.warn('[debates/complete] debate archive 저장 경고:', archiveResult.error?.message || archiveResult.error)
     }
 
-    return sendJson(res, 200, { ok: true, debateId })
+    const onlineLearning = await maybeTriggerOnlineLearning({
+      debateId,
+      topic,
+      totalRounds,
+      consensus,
+      messages: spokenMessages,
+      rewardEvents,
+      preferencePairs,
+    })
+
+    if (onlineLearning?.reason && onlineLearning.reason !== 'disabled') {
+      console.info('[debates/complete] online learning:', onlineLearning)
+    }
+
+    return sendJson(res, 200, { ok: true, debateId, onlineLearning })
   } catch (error) {
     return sendJson(res, 500, { error: error.message || '토론 저장 중 오류가 발생했습니다.' })
   }

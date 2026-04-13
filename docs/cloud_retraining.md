@@ -8,6 +8,8 @@
 2. scripts/trigger-remote-training.mjs 가 원격 GPU 서비스에 signed URL 기반 학습 요청을 보냅니다.
 3. 원격 GPU 서비스가 scripts/run-cloud-training.py 를 실행하면 학습, 퍼블리시, 그리고 선택적으로 scripts/activate-serving-stack.py 를 통한 HF Space 재기동과 Vercel 재배포까지 이어질 수 있습니다.
 
+추가로 ONLINE_LEARNING_ENABLED=true 를 켜면, 웹 앱에서 토론이 끝난 직후 api/debates/complete.js 가 reward/preference 신호를 보고 retraining workflow 를 자동 dispatch 하는 near-online 경로를 사용할 수 있습니다.
+
 ## GitHub 설정 위치
 
 이 저장소의 retraining-pipeline.yml 은 GitHub Environment 를 쓰지 않습니다. 기본 기준은 Repository secrets 와 Repository variables 입니다.
@@ -18,6 +20,7 @@
 - SUPABASE_SERVICE_ROLE_KEY
 - SUPABASE_ANON_KEY
 - HF_TOKEN
+- GITHUB_TOKEN
 - VERCEL_TOKEN
 - REMOTE_TRAINING_WEBHOOK_URL
 - REMOTE_TRAINING_BEARER_TOKEN 선택
@@ -27,6 +30,18 @@
 - HF_LORA_REPO
 - HF_SPACE_ID
 - MODEL_ARTIFACT_TARGET, 기본값 huggingface
+- ONLINE_LEARNING_ENABLED, 기본값 false
+- ONLINE_LEARNING_TRIGGER_MODE, 기본값 github-workflow-dispatch
+- ONLINE_LEARNING_WORKFLOW_FILE, 기본값 retraining-pipeline.yml
+- ONLINE_LEARNING_GITHUB_REF, 기본값 main
+- ONLINE_LEARNING_COOLDOWN_MINUTES, 기본값 60
+- ONLINE_LEARNING_MIN_REWARD_EVENTS, 기본값 4
+- ONLINE_LEARNING_MIN_PREFERENCE_PAIRS, 기본값 4
+- ONLINE_LEARNING_MIN_CONSENSUS_CHARS, 기본값 80
+- ONLINE_LEARNING_REQUIRE_CONSENSUS, 기본값 true
+- ONLINE_LEARNING_FORCE_PREPARE, 기본값 true
+- ONLINE_LEARNING_RUN_REMOTE_TRAINING, 기본값 true
+- ONLINE_LEARNING_RUN_SELF_HOSTED_TRAINING, 기본값 false
 - VERCEL_PROJECT_ID 또는 VERCEL_PROJECT_NAME
 - VERCEL_TEAM_ID 선택
 - VERCEL_DEPLOY_TARGET, 기본값 production
@@ -47,6 +62,7 @@
 3. snapshot 과 각 dataset object path 에 대해 signed URL 을 만듭니다.
 4. 원격 GPU 서비스로 학습 요청 payload 를 보냅니다.
 5. self-hosted 학습 job은 publish-training-artifacts.py 와 activate-serving-stack.py 를 이어서 실행해 최신 모델을 production stack 에 반영할 수 있습니다.
+6. ONLINE_LEARNING_ENABLED=true 이고 GITHUB_TOKEN 이 배포 환경에 있으면, 웹 앱 토론 완료 직후에도 같은 retraining workflow 를 workflow_dispatch 로 자동 호출할 수 있습니다.
 
 ## 원격 GPU 측 최소 계약
 
@@ -79,6 +95,7 @@
 - merge-and-register.py 는 기본적으로 models/dpo/<god_id> 가 있으면 그 어댑터를 우선 활성 모델로 등록하고, 없으면 models/lora/<god_id> 로 폴백합니다. 필요하면 MODEL_ADAPTER_SOURCE=sft 또는 dpo 로 강제할 수 있습니다.
 - publish-training-artifacts.py 는 기본적으로 adapter_config.json, adapter_model.safetensors 같은 최소 파일만 퍼블리시합니다.
 - publish-training-artifacts.py 는 Hugging Face target 일 때 runs/<run_id>/... 버전 경로와 top-level serving alias 경로를 함께 갱신합니다.
+- near-online 모드는 즉시 메모리 반영 + 자동 workflow dispatch 조합입니다. debate 당 즉시 가중치를 직접 수정하는 완전 온라인 RL이 아니며, workflow 중복 실행과 과적합을 막기 위해 cooldown 과 최소 pair 수 게이트를 둡니다.
 - 토론 원문, snapshot, dataset JSONL 은 Hugging Face 로 보내지 않고 계속 Supabase Storage signed URL 경로를 사용합니다.
 - Hugging Face 정책에 걸리면 MODEL_ARTIFACT_TARGET=supabase 로 전환해 모델 산출물도 Supabase Storage 로 보낼 수 있습니다.
 - 로컬 Ollama 배포가 필요하면 별도의 후속 배포 파이프라인을 두는 편이 안전합니다.
