@@ -146,6 +146,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.run_training && needs.prepare-datasets.result == 'success'
     runs-on: self-hosted
     timeout-minutes: 1440
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
 
     steps:
       - name: 저장소 체크아웃
@@ -155,6 +158,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Windows CUDA Torch 선설치
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip uninstall -y torch torchvision torchaudio
+          python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch
 
       - name: 학습 데이터셋 다운로드
         uses: actions/download-artifact@v4
