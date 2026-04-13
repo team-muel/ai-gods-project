@@ -312,13 +312,26 @@ export const getGodById = (id) => AI_GODS.find((god) => god.id === id)
 export const getGodByRole = (role) => AI_GODS.find((god) => god.role === role.toUpperCase())
 export const getAgentConfigById = (id) => AI_COUNCIL.find((agent) => agent.id === id)
 
-export const buildCouncilSystemPrompt = (agentId, phase = 'initial') => {
+export const buildCouncilSystemPrompt = (agentId, phase = 'initial', options = {}) => {
   const agent = getAgentConfigById(agentId)
   if (!agent) throw new Error(`Unknown agentId: ${agentId}`)
+
+  const compact = options?.compact === true
 
   if (agentId === JUDGE_AGENT_ID) {
     const phaseConfig = JUDGE_PHASES[phase] || JUDGE_PHASES['judge-final']
     if (phase === 'judge-consensus') {
+      if (compact) {
+        return buildLines([
+          agent.systemPrompt,
+          `핵심 렌즈: ${agent.runtime.lens}`,
+          `현재 단계: ${phaseConfig.stageName}`,
+          '오직 "예" 또는 "아니오" 한 단어만 답하세요.',
+          '설명과 부연은 절대 붙이지 마세요.',
+          '반드시 한국어로 답변하세요.',
+        ])
+      }
+
       return buildLines([
         agent.systemPrompt,
         `핵심 렌즈: ${agent.runtime.lens}`,
@@ -327,6 +340,19 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial') => {
         ...phaseConfig.rules,
         '판정 시 확인할 항목:',
         ...buildNumberedLines(agent.runtime.consensusChecklist),
+        '반드시 한국어로 답변하세요.',
+      ])
+    }
+
+    if (compact) {
+      return buildLines([
+        agent.systemPrompt,
+        `핵심 렌즈: ${agent.runtime.lens}`,
+        `작동 원칙: ${agent.runtime.operatingPrinciple}`,
+        `현재 단계: ${phaseConfig.stageName}`,
+        `정리 순서: ${agent.runtime.finalSections.join(' / ')}`,
+        '새 주장을 만들지 말고 기존 발언만 정리하세요.',
+        '실행 순서와 남은 이견을 짧고 분명하게 구분하세요.',
         '반드시 한국어로 답변하세요.',
       ])
     }
@@ -348,6 +374,21 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial') => {
   const phaseConfig = MEMBER_PHASES[phase] || MEMBER_PHASES.initial
   const sectionKey = phase === 'debate' ? 'debateSections' : 'initialSections'
   const checklistKey = phase === 'debate' ? 'debateChecklist' : 'initialChecklist'
+
+  if (compact) {
+    return buildLines([
+      agent.systemPrompt,
+      `핵심 렌즈: ${agent.runtime.lens}`,
+      `작동 원칙: ${agent.runtime.operatingPrinciple}`,
+      `현재 단계: ${phaseConfig.stageName}`,
+      phase === 'debate'
+        ? '다른 임원을 최소 1명 실명으로 언급하고 동의/반박/보완 중 하나를 분명히 밝히세요.'
+        : '핵심 주장과 실행 포인트를 먼저 제시하세요.',
+      `반드시 포함할 관점: ${agent.runtime[checklistKey].join(' / ')}`,
+      `권장 소제목 순서: ${agent.runtime[sectionKey].join(' / ')}`,
+      '반드시 한국어로 답변하세요.',
+    ])
+  }
 
   return buildLines([
     agent.systemPrompt,

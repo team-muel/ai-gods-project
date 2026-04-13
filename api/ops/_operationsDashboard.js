@@ -40,7 +40,7 @@ const resolveEnv = (env, keys) => keys.map((key) => env?.[key]).find(Boolean) ||
 
 const createSupabaseClient = (env) => {
   const url = resolveEnv(env, ['SUPABASE_URL', 'VITE_SUPABASE_URL'])
-  const key = resolveEnv(env, ['SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_ANON_KEY'])
+  const key = resolveEnv(env, ['SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY'])
 
   if (!url || !key) {
     return null
@@ -88,6 +88,27 @@ const fetchJson = async (url, { headers } = {}) => {
   }
 
   return data
+}
+
+const isMissingSchemaObjectError = (error, objectNames = []) => {
+  const code = String(error?.code || '').toUpperCase()
+  const text = [error?.message, error?.details, error?.hint]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  const mentionsObject = objectNames.length === 0 || objectNames.some((name) => text.includes(String(name).toLowerCase()))
+  const missingObjectSignal = text.includes('does not exist') || text.includes('could not find the table') || text.includes('schema cache')
+
+  return mentionsObject && (code === '42P01' || code === 'PGRST205' || missingObjectSignal)
+}
+
+const resolveOptionalResult = async (promise, objectName) => {
+  const result = await promise
+  if (result.error && isMissingSchemaObjectError(result.error, [objectName])) {
+    return { data: [], error: null }
+  }
+  return result
 }
 
 const normalizeDebate = (debate) => ({
@@ -219,7 +240,7 @@ const getAgentMetrics = async ({ env, since }) => {
   }
 
   const [godStatsResult, recentMessagesResult, memoriesResult, neuroResult, arousalResult, immuneResult] = await Promise.all([
-    supabase.from('god_stats').select('god_id, god_name, total_debates, total_messages, avg_response_length, last_active'),
+    supabase.from('god_stats').select('god_id, total_debates, total_messages, last_active'),
     supabase
       .from('debate_messages')
       .select('god_id, debate_id, content, created_at')
@@ -230,21 +251,30 @@ const getAgentMetrics = async ({ env, since }) => {
       .select('god_id, status')
       .eq('status', 'active')
       .range(0, 1999),
-    supabase
-      .from('neuro_logs')
-      .select('agent_id, dopamine, cortisol, temperature, top_p, max_tokens, created_at')
-      .gte('created_at', since.toISOString())
-      .range(0, 1999),
-    supabase
-      .from('arousal_logs')
-      .select('agent_id, heart_rate, burst, token_factor, suggested_delay_ms, created_at')
-      .gte('created_at', since.toISOString())
-      .range(0, 1999),
-    supabase
-      .from('immune_logs')
-      .select('agent_id, status, similarity, created_at')
-      .gte('created_at', since.toISOString())
-      .range(0, 1999),
+    resolveOptionalResult(
+      supabase
+        .from('neuro_logs')
+        .select('agent_id, dopamine, cortisol, temperature, top_p, max_tokens, created_at')
+        .gte('created_at', since.toISOString())
+        .range(0, 1999),
+      'neuro_logs'
+    ),
+    resolveOptionalResult(
+      supabase
+        .from('arousal_logs')
+        .select('agent_id, heart_rate, burst, token_factor, suggested_delay_ms, created_at')
+        .gte('created_at', since.toISOString())
+        .range(0, 1999),
+      'arousal_logs'
+    ),
+    resolveOptionalResult(
+      supabase
+        .from('immune_logs')
+        .select('agent_id, status, similarity, created_at')
+        .gte('created_at', since.toISOString())
+        .range(0, 1999),
+      'immune_logs'
+    ),
   ])
 
   for (const result of [godStatsResult, recentMessagesResult, memoriesResult, neuroResult, arousalResult, immuneResult]) {

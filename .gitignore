@@ -10,6 +10,7 @@ build/
 
 # 환경 변수 (절대 커밋 금지)
 .env
+.env.vercel
 .env.local
 .env.development.local
 .env.test.local
@@ -49,6 +50,7 @@ training_data/
 training-data/
 dpo-data/
 models/lora/
+models/lora_smoke_backup_*/
 models/dpo/
 models/merged/
 models/gguf/

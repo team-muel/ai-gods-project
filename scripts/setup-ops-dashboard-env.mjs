@@ -1,4 +1,5 @@
 import { execSync } from 'child_process'
+import { existsSync, readFileSync } from 'fs'
 
 const parseArgs = () => {
   const args = process.argv.slice(2)
@@ -23,6 +24,24 @@ const detectGitRemote = () => {
   }
 }
 
+const detectVercelLink = () => {
+  const projectPath = '.vercel/project.json'
+  if (!existsSync(projectPath)) {
+    return { projectId: '', orgId: '', projectName: '' }
+  }
+
+  try {
+    const payload = JSON.parse(readFileSync(projectPath, 'utf-8'))
+    return {
+      projectId: String(payload?.projectId || ''),
+      orgId: String(payload?.orgId || ''),
+      projectName: String(payload?.projectName || ''),
+    }
+  } catch {
+    return { projectId: '', orgId: '', projectName: '' }
+  }
+}
+
 const buildQuery = (params) => {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -33,17 +52,36 @@ const buildQuery = (params) => {
 
 const args = parseArgs()
 const gitRemote = detectGitRemote()
+const vercelLink = detectVercelLink()
 const vercelToken = resolveEnv('VERCEL_TOKEN')
-const projectIdOrName = resolveEnv('VERCEL_PROJECT_ID', 'VERCEL_PROJECT_NAME') || gitRemote.repo || 'ai-gods-project'
-const teamId = resolveEnv('VERCEL_TEAM_ID')
+const projectIdOrName = resolveEnv('VERCEL_PROJECT_ID', 'VERCEL_PROJECT_NAME') || vercelLink.projectId || vercelLink.projectName || gitRemote.repo || 'ai-gods-project'
+const teamId = resolveEnv('VERCEL_TEAM_ID') || vercelLink.orgId
 const githubOwner = resolveEnv('GITHUB_REPO_OWNER', 'VERCEL_GIT_REPO_OWNER') || gitRemote.owner || 'team-muel'
 const githubRepo = resolveEnv('GITHUB_REPO_NAME', 'VERCEL_GIT_REPO_SLUG') || gitRemote.repo || 'ai-gods-project'
 
 const runtimeVars = [
+  { key: 'SUPABASE_URL', value: resolveEnv('SUPABASE_URL', 'VITE_SUPABASE_URL') },
+  { key: 'SUPABASE_ANON_KEY', value: resolveEnv('SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY') },
+  { key: 'SUPABASE_SERVICE_ROLE_KEY', value: resolveEnv('SUPABASE_SERVICE_ROLE_KEY') },
+  { key: 'CHAT_PROVIDER_MODE', value: resolveEnv('CHAT_PROVIDER_MODE') },
+  { key: 'CHAT_PROVIDER_CCO', value: resolveEnv('CHAT_PROVIDER_CCO') },
+  { key: 'CHAT_PROVIDER_CSO', value: resolveEnv('CHAT_PROVIDER_CSO') },
+  { key: 'CHAT_PROVIDER_CPO', value: resolveEnv('CHAT_PROVIDER_CPO') },
+  { key: 'CHAT_PROVIDER_CMO', value: resolveEnv('CHAT_PROVIDER_CMO') },
+  { key: 'CHAT_PROVIDER_CXO', value: resolveEnv('CHAT_PROVIDER_CXO') },
+  { key: 'CHAT_PROVIDER_CFO', value: resolveEnv('CHAT_PROVIDER_CFO') },
+  { key: 'CHAT_PROVIDER_CDO', value: resolveEnv('CHAT_PROVIDER_CDO') },
+  { key: 'CHAT_PROVIDER_CTO', value: resolveEnv('CHAT_PROVIDER_CTO') },
+  { key: 'CUSTOM_MODEL_BASE_URL', value: resolveEnv('CUSTOM_MODEL_BASE_URL') },
+  { key: 'CUSTOM_MODEL_API_KEY', value: resolveEnv('CUSTOM_MODEL_API_KEY') },
+  { key: 'CUSTOM_MODEL_CHAT_PATH', value: resolveEnv('CUSTOM_MODEL_CHAT_PATH') },
+  { key: 'CUSTOM_MODEL_TIMEOUT_MS', value: resolveEnv('CUSTOM_MODEL_TIMEOUT_MS') },
+  { key: 'CUSTOM_MODEL_NAME', value: resolveEnv('CUSTOM_MODEL_NAME') },
+  { key: 'MODEL_ROUTER_ALLOW_FALLBACK', value: resolveEnv('MODEL_ROUTER_ALLOW_FALLBACK') },
   { key: 'GITHUB_REPO_OWNER', value: githubOwner },
   { key: 'GITHUB_REPO_NAME', value: githubRepo },
-  { key: 'VERCEL_PROJECT_NAME', value: resolveEnv('VERCEL_PROJECT_NAME') || projectIdOrName },
-  { key: 'VERCEL_PROJECT_ID', value: resolveEnv('VERCEL_PROJECT_ID') },
+  { key: 'VERCEL_PROJECT_NAME', value: resolveEnv('VERCEL_PROJECT_NAME') || vercelLink.projectName || projectIdOrName },
+  { key: 'VERCEL_PROJECT_ID', value: resolveEnv('VERCEL_PROJECT_ID') || vercelLink.projectId },
   { key: 'VERCEL_TEAM_ID', value: teamId },
   { key: 'GITHUB_TOKEN', value: resolveEnv('GITHUB_TOKEN', 'GH_TOKEN') },
   { key: 'VERCEL_TOKEN', value: vercelToken },

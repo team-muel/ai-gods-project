@@ -181,6 +181,30 @@ jobs:
           DATASET_SNAPSHOT_ID: ${{ needs.prepare-datasets.outputs.snapshot_id }}
         run: python scripts/merge-and-register.py --god all
 
+      - name: 학습 산출물 퍼블리시
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_LORA_REPO: ${{ vars.HF_LORA_REPO || secrets.HF_LORA_REPO }}
+          MODEL_ARTIFACT_TARGET: ${{ vars.MODEL_ARTIFACT_TARGET }}
+          MODEL_RUN_ID: gh-${{ github.run_id }}
+          DATASET_SNAPSHOT_ID: ${{ needs.prepare-datasets.outputs.snapshot_id }}
+          PUBLISH_INCLUDE_DPO: ${{ needs.readiness.outputs.ready_for_dpo }}
+          PUBLISH_SERVING_ALIASES: '1'
+        run: python scripts/publish-training-artifacts.py
+
+      - name: 상시 추론 서버 및 Vercel 활성화
+        env:
+          MODEL_RUN_ID: gh-${{ github.run_id }}
+          MODEL_ARTIFACT_TARGET: ${{ vars.MODEL_ARTIFACT_TARGET }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_NAME: ${{ vars.VERCEL_PROJECT_NAME }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          VERCEL_DEPLOY_TARGET: ${{ vars.VERCEL_DEPLOY_TARGET || 'production' }}
+        run: python scripts/activate-serving-stack.py --run-id gh-${{ github.run_id }}
+
       - name: 학습 결과 아티팩트 업로드
         uses: actions/upload-artifact@v4
         with:
@@ -220,7 +244,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          HF_LORA_REPO: ${{ secrets.HF_LORA_REPO }}
+          HF_LORA_REPO: ${{ vars.HF_LORA_REPO || secrets.HF_LORA_REPO }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
           REMOTE_TRAINING_PROVIDER: ${{ vars.REMOTE_TRAINING_PROVIDER }}
           REMOTE_TRAINING_WEBHOOK_URL: ${{ secrets.REMOTE_TRAINING_WEBHOOK_URL }}
           REMOTE_TRAINING_BEARER_TOKEN: ${{ secrets.REMOTE_TRAINING_BEARER_TOKEN }}

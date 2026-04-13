@@ -2,6 +2,10 @@
 
 이 워크스페이스에는 Supabase MCP가 프로젝트 범위 고정으로 설정되어 있다.
 
+보완 가이드:
+
+- gcpCompute 사용 기준: [gcpcompute_mcp_usage.md](gcpcompute_mcp_usage.md)
+
 대상 프로젝트:
 - project_ref: `ficrhsijzkzjqstnchju`
 

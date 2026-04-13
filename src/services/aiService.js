@@ -21,10 +21,27 @@ import { initImmuneAgent, scanAndQuarantine } from './immuneSystem.js'
 
 const IS_DEV = import.meta.env.DEV === true
 const CHAT_API_URL = '/api/chat'
-const DEFAULT_JUDGE_SAMPLING = { temperature: 0.2, top_p: 0.65, max_tokens: 500 }
-const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 간결하게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
+const readPositiveInt = (value, fallback, minimum = 1) => {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isNaN(parsed) ? fallback : Math.max(minimum, parsed)
+}
+
+const COMPACT_RUNTIME_PROMPTS = String(import.meta.env.VITE_AI_COMPACT_PROMPTS || 'true').trim().toLowerCase() !== 'false'
+const INCLUDE_INTERNAL_STATE_PROMPT = String(import.meta.env.VITE_AI_INCLUDE_STATE_PROMPT || (IS_DEV ? 'true' : 'false')).trim().toLowerCase() === 'true'
+const MEMBER_MAX_TOKENS = readPositiveInt(import.meta.env.VITE_AI_MEMBER_MAX_TOKENS, 220, 64)
+const JUDGE_MAX_TOKENS = readPositiveInt(import.meta.env.VITE_AI_JUDGE_MAX_TOKENS, IS_DEV ? 360 : 220, 48)
+const ANGEL_MAX_TOKENS = readPositiveInt(import.meta.env.VITE_AI_ANGEL_MAX_TOKENS, 80, 24)
+const ANGEL_SOURCE_CHARS = readPositiveInt(import.meta.env.VITE_AI_ANGEL_SOURCE_CHARS, 360, 120)
+const DEBATE_CONTEXT_CHARS = readPositiveInt(import.meta.env.VITE_AI_DEBATE_CONTEXT_CHARS, 220, 80)
+const CONSENSUS_CONTEXT_CHARS = readPositiveInt(import.meta.env.VITE_AI_CONSENSUS_CONTEXT_CHARS, 90, 40)
+const FINAL_CONTEXT_CHARS = readPositiveInt(import.meta.env.VITE_AI_FINAL_CONTEXT_CHARS, IS_DEV ? 220 : 110, 60)
+const TRANSCRIPT_CONTEXT_CHARS = readPositiveInt(import.meta.env.VITE_AI_TRANSCRIPT_CONTEXT_CHARS, 1200, 400)
+const DEFAULT_JUDGE_SAMPLING = { temperature: 0.2, top_p: 0.65, max_tokens: JUDGE_MAX_TOKENS }
+const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 2개만 짧게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
+const ENABLE_OLLAMA_FALLBACK = String(import.meta.env.VITE_ENABLE_OLLAMA_FALLBACK || 'false').trim().toLowerCase() === 'true'
 
 const unique = (items) => [...new Set(items.filter(Boolean))]
+const trimForPrompt = (value, limit) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit)
 
 AI_GOD_IDS.forEach((id) => {
   const agent = getAgentConfigById(id)
@@ -57,11 +74,12 @@ const extractAssistantContent = (data) => (
   '응답을 받지 못했습니다.'
 )
 
-const callGroq = async (systemPrompt, userMessage, maxTokens, temperature, top_p) => {
+const callRemoteRuntime = async (agentId, systemPrompt, userMessage, maxTokens, temperature, top_p) => {
   const response = await fetch(CHAT_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      agentId,
       model: REMOTE_RUNTIME_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -75,18 +93,19 @@ const callGroq = async (systemPrompt, userMessage, maxTokens, temperature, top_p
 
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(`Groq 오류: ${response.status} — ${extractErrorMessage(data, '알 수 없는 오류')}`)
+    throw new Error(`채팅 런타임 오류: ${response.status} — ${extractErrorMessage(data, '알 수 없는 오류')}`)
   }
 
   return extractAssistantContent(data)
 }
 
-const tryLocalModel = async (model, messages, options) => {
+const tryLocalModel = async (agentId, model, messages, options) => {
   try {
     const response = await fetch(CHAT_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        agentId,
         provider: 'ollama',
         model,
         messages,
@@ -113,7 +132,7 @@ const callLocalRuntimeWithFallback = async (agentId, messages, options) => {
   const candidates = unique([agent?.runtime?.localModel, LOCAL_RUNTIME_FALLBACK_MODEL])
 
   for (const model of candidates) {
-    const content = await tryLocalModel(model, messages, options)
+    const content = await tryLocalModel(agentId, model, messages, options)
     if (content !== null) return content
   }
 
@@ -121,6 +140,7 @@ const callLocalRuntimeWithFallback = async (agentId, messages, options) => {
 }
 
 const buildInternalStatePrompt = (agentId) => {
+  if (!INCLUDE_INTERNAL_STATE_PROMPT) return null
   if (agentId === JUDGE_AGENT_ID) return null
 
   try {
@@ -158,35 +178,49 @@ const getRuntimeSampling = (agentId, maxTokens, arousalParams) => {
 }
 
 const callAngelModel = async (userMessage) => {
-  if (IS_DEV) {
+  try {
+    return await callRemoteRuntime(JUDGE_AGENT_ID, ANGEL_SYSTEM_PROMPT, userMessage, ANGEL_MAX_TOKENS, 0.4, 0.8)
+  } catch (error) {
+    if (!(IS_DEV && ENABLE_OLLAMA_FALLBACK)) {
+      throw error
+    }
+
     const content = await callLocalRuntimeWithFallback(
       JUDGE_AGENT_ID,
       [{ role: 'system', content: ANGEL_SYSTEM_PROMPT }, { role: 'user', content: userMessage }],
-      { num_predict: 150, temperature: 0.5, top_p: 0.9 }
+      { num_predict: ANGEL_MAX_TOKENS, temperature: 0.4, top_p: 0.8 }
     )
     if (content !== null) return content
-    console.warn('[Dev] 로컬 천사 요약 실패 → Groq 폴백')
+    console.warn('[Dev] /api/chat 천사 요약 실패 → Ollama fallback도 실패')
+    throw error
   }
-
-  return await callGroq(ANGEL_SYSTEM_PROMPT, userMessage, 150, 0.5, 0.9)
 }
 
 export const angelSummarize = async (godId, godName, opinion) => {
-  const prompt = `[${godName}의 의견]\n${opinion.slice(0, 600)}\n\n위 의견의 핵심 주장 3가지를 불릿 포인트(•)로 간결하게 요약하세요.`
+  const prompt = `[${godName}의 의견]\n${trimForPrompt(opinion, ANGEL_SOURCE_CHARS)}\n\n위 의견의 핵심 주장 2가지를 불릿 포인트(•)로 간결하게 요약하세요.`
   return await callAngelModel(prompt)
 }
 
-const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = 600 } = {}) => {
-  const baseSystemPrompt = buildCouncilSystemPrompt(agentId, phase)
+const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = null } = {}) => {
+  const baseSystemPrompt = buildCouncilSystemPrompt(agentId, phase, { compact: COMPACT_RUNTIME_PROMPTS })
   const arousalParams = agentId === JUDGE_AGENT_ID ? null : getArousalParams(agentId)
+  const resolvedMaxTokens = Number.isFinite(maxTokens)
+    ? maxTokens
+    : (agentId === JUDGE_AGENT_ID ? JUDGE_MAX_TOKENS : MEMBER_MAX_TOKENS)
   const combinedSystem = [
     baseSystemPrompt,
     buildInternalStatePrompt(agentId),
     buildArousalPrompt(agentId, arousalParams),
   ].filter(Boolean).join('\n\n')
-  const sampling = getRuntimeSampling(agentId, maxTokens, arousalParams)
+  const sampling = getRuntimeSampling(agentId, resolvedMaxTokens, arousalParams)
 
-  if (IS_DEV) {
+  try {
+    return await callRemoteRuntime(agentId, combinedSystem, userMessage, sampling.maxTokens, sampling.temperature, sampling.top_p)
+  } catch (error) {
+    if (!(IS_DEV && ENABLE_OLLAMA_FALLBACK)) {
+      throw error
+    }
+
     const localResult = await callLocalRuntimeWithFallback(
       agentId,
       [
@@ -197,10 +231,9 @@ const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = 
     )
     if (localResult !== null) return localResult
 
-    console.warn(`[Dev] 로컬 Ollama 완전 실패 → Groq 폴백 (${agentId})`)
+    console.warn(`[Dev] /api/chat 실패 후 Ollama fallback도 실패 (${agentId})`)
+    throw error
   }
-
-  return await callGroq(combinedSystem, userMessage, sampling.maxTokens, sampling.temperature, sampling.top_p)
 }
 
 export const callAI = async (godId, topic, transcript = null) => {
@@ -218,7 +251,7 @@ export const callAI = async (godId, topic, transcript = null) => {
     userMessage = [
       memoryContext,
       obsidianContext,
-      `다음은 YouTube 영상의 내용입니다:\n\n"${transcript.slice(0, 2000)}"\n\n위 영상에 대해 당신의 전문 분야 관점에서 분석하고 초기 의견을 제시하세요.`,
+      `다음은 YouTube 영상의 내용입니다:\n\n"${transcript.slice(0, TRANSCRIPT_CONTEXT_CHARS)}"\n\n위 영상에 대해 당신의 전문 분야 관점에서 분석하고 초기 의견을 제시하세요.`,
     ].filter(Boolean).join('\n\n')
   } else {
     userMessage = [
@@ -244,7 +277,7 @@ export const callAI = async (godId, topic, transcript = null) => {
 
 export const callAIDebate = async (godId, topic, otherOpinions, opts = {}) => {
   const opinionsText = otherOpinions
-    .map(opinion => `[${opinion.god}]: ${opinion.content}`)
+    .map(opinion => `[${opinion.god}]: ${trimForPrompt(opinion.content, DEBATE_CONTEXT_CHARS)}`)
     .join('\n\n')
 
   const negWords = ['반박', '아니다', '틀리', '동의하지', '그렇지 않']
@@ -291,7 +324,7 @@ export const checkConsensus = async (topic, roundMessages) => {
   if (!roundMessages || roundMessages.length === 0) return false
 
   const summary = roundMessages
-    .map(message => `[${message.god}]: ${message.content.slice(0, 120)}`)
+    .map(message => `[${message.god}]: ${trimForPrompt(message.content, CONSENSUS_CONTEXT_CHARS)}`)
     .join('\n')
 
   const content = await callModel(
@@ -312,17 +345,17 @@ export const generateFinalConsensus = async (topic, allMessages) => {
 
   if (IS_DEV) {
     const summary = allMessages
-      .map(message => `[${message.god} R${message.round}]: ${message.content}`)
+      .map(message => `[${message.god} R${message.round}]: ${trimForPrompt(message.content, FINAL_CONTEXT_CHARS)}`)
       .join('\n\n')
     prompt = `주제: ${topic}\n\n전체 토론:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`
   } else {
     const lastRound = Math.max(...allMessages.map(message => message.round))
     const summary = allMessages
       .filter(message => message.round === lastRound)
-      .map(message => `[${message.god}]: ${message.content.slice(0, 150)}`)
+      .map(message => `[${message.god}]: ${trimForPrompt(message.content, FINAL_CONTEXT_CHARS)}`)
       .join('\n')
     prompt = `주제: ${topic}\n\n최종 라운드 요약:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`
   }
 
-  return await callModel(JUDGE_AGENT_ID, prompt, { phase: 'judge-final', maxTokens: IS_DEV ? 800 : 500 })
+  return await callModel(JUDGE_AGENT_ID, prompt, { phase: 'judge-final', maxTokens: JUDGE_MAX_TOKENS })
 }

@@ -65,6 +65,21 @@ def should_include_file(kind, file_name, include_tokenizer):
     return False
 
 
+def has_adapter_files(path):
+    return (path / "adapter_config.json").exists() and (path / "adapter_model.safetensors").exists()
+
+
+def resolve_active_serving_dir(model_id, include_dpo):
+    dpo_dir = Path("models/dpo") / model_id
+    lora_dir = Path("models/lora") / model_id
+
+    if include_dpo and has_adapter_files(dpo_dir):
+        return dpo_dir, "dpo"
+    if has_adapter_files(lora_dir):
+        return lora_dir, "lora"
+    return None, None
+
+
 def collect_entries(root_dir, kind, publish_root, include_tokenizer):
     entries = []
     if not root_dir.exists():
@@ -86,6 +101,37 @@ def collect_entries(root_dir, kind, publish_root, include_tokenizer):
     return entries
 
 
+def collect_serving_alias_entries(include_dpo, include_tokenizer):
+    entries = []
+    model_ids = set()
+
+    for root_dir in [Path("models/lora"), Path("models/dpo") if include_dpo else None]:
+        if not root_dir or not root_dir.exists():
+            continue
+        for model_dir in sorted(path for path in root_dir.iterdir() if path.is_dir()):
+            model_ids.add(model_dir.name)
+
+    for model_id in sorted(model_ids):
+        source_dir, source_kind = resolve_active_serving_dir(model_id, include_dpo)
+        if not source_dir:
+            continue
+
+        for file_path in sorted(path for path in source_dir.iterdir() if path.is_file()):
+            if not should_include_file("lora", file_path.name, include_tokenizer):
+                continue
+
+            entries.append({
+                "kind": "serving-alias",
+                "sourceKind": source_kind,
+                "modelId": model_id,
+                "localPath": str(file_path),
+                "remotePath": build_path("", model_id, file_path.name),
+                "contentType": guess_content_type(file_path.name),
+            })
+
+    return entries
+
+
 def build_manifest(args, target, entries):
     return {
         "target": target,
@@ -96,12 +142,14 @@ def build_manifest(args, target, entries):
         "includeDpo": args.include_dpo,
         "includeMerged": args.include_merged,
         "includeTokenizer": args.include_tokenizer,
+        "publishServingAliases": args.publish_serving_aliases,
         "published": [
             {
                 "kind": entry["kind"],
                 "modelId": entry["modelId"],
                 "localPath": entry["localPath"],
                 "remotePath": entry["remotePath"],
+                "sourceKind": entry.get("sourceKind"),
             }
             for entry in entries
         ],
@@ -196,8 +244,11 @@ def main():
     parser.add_argument("--repo-public", dest="repo_private", action="store_false")
     parser.add_argument("--include-dpo", dest="include_dpo", action="store_true")
     parser.add_argument("--skip-dpo", dest="include_dpo", action="store_false")
+    parser.add_argument("--publish-serving-aliases", dest="publish_serving_aliases", action="store_true")
+    parser.add_argument("--skip-serving-aliases", dest="publish_serving_aliases", action="store_false")
     parser.set_defaults(
         include_dpo=truthy(os.environ.get("PUBLISH_INCLUDE_DPO", "1")),
+        publish_serving_aliases=truthy(os.environ.get("PUBLISH_SERVING_ALIASES", "1")),
         repo_private=truthy(os.environ.get("HF_PRIVATE_REPO", "1")),
     )
     parser.add_argument("--out", default="outputs/cloud-training-publish.json")
@@ -212,6 +263,9 @@ def main():
 
     if args.include_merged:
         entries.extend(collect_entries(Path("models/merged"), "merged", publish_root, args.include_tokenizer))
+
+    if args.target == "huggingface" and args.publish_serving_aliases:
+        entries.extend(collect_serving_alias_entries(args.include_dpo, args.include_tokenizer))
 
     if not entries:
         raise SystemExit("퍼블리시할 모델 산출물이 없습니다.")
