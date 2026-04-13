@@ -84,6 +84,9 @@ DEFAULT_MAX_TOKENS = to_int(os.environ.get("SERVING_DEFAULT_MAX_TOKENS"), 600, m
 MAX_NEW_TOKENS_LIMIT = to_int(os.environ.get("SERVING_MAX_NEW_TOKENS_LIMIT"), 2048, minimum=64)
 API_KEY = os.environ.get("SERVING_API_KEY") or ""
 TRUST_REMOTE_CODE = truthy(os.environ.get("SERVING_TRUST_REMOTE_CODE"), default=False)
+HF_LORA_REPO = os.environ.get("HF_LORA_REPO") or ""
+HF_TOKEN = os.environ.get("HF_TOKEN") or ""
+BACKGROUND_WARMUP = truthy(os.environ.get("SERVING_BACKGROUND_WARMUP"), default=False)
 
 AGENT_NAMES = {
     "cco": "Muse",
@@ -209,6 +212,45 @@ def count_tokens(token_ids) -> int:
     return len(token_ids)
 
 
+def has_local_adapters(adapter_root: Path) -> bool:
+    if not adapter_root.exists():
+        return False
+    for agent_id in AGENT_NAMES:
+        if (adapter_root / agent_id / "adapter_config.json").exists() and (adapter_root / agent_id / "adapter_model.safetensors").exists():
+            return True
+    return False
+
+
+def ensure_adapters_available():
+    if has_local_adapters(ADAPTER_ROOT):
+        return
+    if not HF_LORA_REPO:
+        return
+
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as error:
+        raise RuntimeError(f"huggingface_hub import 실패: {error}") from error
+
+    allow_patterns = []
+    for agent_id in AGENT_NAMES:
+        allow_patterns.extend([
+            f"{agent_id}/adapter_config.json",
+            f"{agent_id}/adapter_model.safetensors",
+        ])
+
+    ADAPTER_ROOT.mkdir(parents=True, exist_ok=True)
+    print(f"[god-server] HF Hub adapter 다운로드: {HF_LORA_REPO}")
+    snapshot_download(
+        repo_id=HF_LORA_REPO,
+        repo_type="model",
+        token=HF_TOKEN or None,
+        local_dir=str(ADAPTER_ROOT),
+        allow_patterns=allow_patterns,
+    )
+    print("[god-server] HF Hub adapter 다운로드 완료")
+
+
 class AdapterRegistry:
     def __init__(self, adapter_root: Path, manifest_path: Path):
         self.adapter_root = adapter_root
@@ -307,6 +349,8 @@ class HotSwapModelServer:
         self._tokenizer = None
         self._base_model = None
         self._peft_model = None
+        self._warmup_complete = False
+        self._warmup_error: Optional[str] = None
 
     def _load_base(self):
         if self._base_model is not None and self._tokenizer is not None:
@@ -323,9 +367,17 @@ class HotSwapModelServer:
         print("[god-server] 베이스 모델 로딩 완료")
 
     def warmup(self):
-        with self._lock:
-            self._load_base()
-            self.registry.reload()
+        try:
+            with self._lock:
+                ensure_adapters_available()
+                self._load_base()
+                self.registry.reload()
+                self._warmup_complete = True
+                self._warmup_error = None
+        except Exception as error:
+            self._warmup_complete = False
+            self._warmup_error = str(error)
+            raise
 
     def reload_registry(self):
         with self._lock:
@@ -458,7 +510,7 @@ class HotSwapModelServer:
 
     def status(self):
         return {
-            "status": "ok",
+            "status": "ready" if self._warmup_complete else "loading",
             "baseModel": BASE_MODEL,
             "defaultModelName": DEFAULT_MODEL_NAME,
             "adapterManifest": str(ADAPTER_MANIFEST),
@@ -466,6 +518,7 @@ class HotSwapModelServer:
             "loadedAdapters": list(self._loaded_adapters.keys()),
             "activeAdapter": self._active_adapter,
             "knownAdapters": list(self.registry.as_dict().keys()),
+            "warmupError": self._warmup_error,
         }
 
 
@@ -484,6 +537,9 @@ def require_api_key(authorization: Optional[str]):
 
 @app.on_event("startup")
 async def startup_event():
+    if BACKGROUND_WARMUP:
+        threading.Thread(target=server.warmup, daemon=True).start()
+        return
     server.warmup()
 
 
@@ -584,6 +640,9 @@ async def ollama_tags(authorization: Optional[str] = Header(default=None)):
 
 
 if __name__ == "__main__":
-    server.warmup()
+    if BACKGROUND_WARMUP:
+        threading.Thread(target=server.warmup, daemon=True).start()
+    else:
+        server.warmup()
     print(f"[god-server] http://{HOST}:{PORT} 에서 실행 중")
     uvicorn.run(app, host=HOST, port=PORT)

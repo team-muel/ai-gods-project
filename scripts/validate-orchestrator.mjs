@@ -23,6 +23,12 @@ const REQUESTED_AGENT_IDS = String(process.env.VALIDATION_AGENT_IDS || '')
 const USE_MEMORIES = !['0', 'false', 'no', 'off'].includes(String(process.env.VALIDATION_USE_MEMORIES || 'false').trim().toLowerCase())
 const USE_SEARCH = !['0', 'false', 'no', 'off'].includes(String(process.env.VALIDATION_USE_SEARCH || 'false').trim().toLowerCase())
 const USE_OBSIDIAN = !['0', 'false', 'no', 'off'].includes(String(process.env.VALIDATION_USE_OBSIDIAN || 'false').trim().toLowerCase())
+const REQUEST_HEADERS = {
+  Accept: 'application/json',
+  Origin: BASE_URL,
+  Referer: `${BASE_URL}/`,
+  'User-Agent': 'AI-Gods-Validation/1.0',
+}
 
 const normalize = (text) => String(text || '').replace(/\s+/g, ' ').trim()
 
@@ -50,14 +56,16 @@ const getJson = async (pathname, params = null) => {
     })
   }
 
-  const response = await fetch(url)
+  const response = await fetch(url, {
+    headers: REQUEST_HEADERS,
+  })
   return await ensureOk(response)
 }
 
 const postJson = async (pathname, payload) => {
   const response = await fetch(`${BASE_URL}${pathname}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...REQUEST_HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
   return await ensureOk(response)
