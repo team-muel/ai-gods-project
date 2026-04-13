@@ -6,6 +6,9 @@ import path from 'path'
 import chokidar from 'chokidar'
 import matter from 'gray-matter'
 import { createClient } from '@supabase/supabase-js'
+import chatHandler from './api/chat.js'
+import debatesCompleteHandler from './api/debates/complete.js'
+import memoriesRelevantHandler from './api/memories/relevant.js'
 import { buildOperationsDashboard, DEFAULT_DASHBOARD_PAGE_SIZE } from './api/ops/_operationsDashboard.js'
 
 // ── Obsidian 유틸 ───────────────────────────────────────────
@@ -18,6 +21,12 @@ const slugify = (text) =>
 
 const ensureDir = (dirPath) => {
   if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true })
+}
+
+const attachQueryParams = (req) => {
+  const urlObj = new URL(req.url || '/', 'http://localhost')
+  req.query = Object.fromEntries(urlObj.searchParams.entries())
+  return urlObj
 }
 
 // Obsidian .md 파일 생성
@@ -207,96 +216,59 @@ export default defineConfig(({ mode }) => {
 
       // ── Chat 프록시 미들웨어 (Groq + 로컬 Ollama direct) ──
       {
-        name: 'groq-proxy',
+        name: 'chat-api-proxy',
         configureServer(server) {
           server.middlewares.use('/api/chat', (req, res) => {
             if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
             let body = ''
             req.on('data', chunk => (body += chunk))
             req.on('end', async () => {
-              let payload
               try {
-                payload = body ? JSON.parse(body) : {}
+                req.body = body
+                await chatHandler(req, res)
               } catch (e) {
                 res.statusCode = 400
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: 'JSON 본문 파싱 실패' }))
-                return
+                res.end(JSON.stringify({ error: e?.message || '채팅 요청 처리 실패' }))
               }
+            })
+          })
+        },
+      },
 
-              const provider = payload?.provider === 'ollama' ? 'ollama' : 'groq'
-              delete payload.provider
+      {
+        name: 'memories-relevant-api',
+        configureServer(server) {
+          server.middlewares.use('/api/memories/relevant', async (req, res) => {
+            try {
+              attachQueryParams(req)
+              await memoriesRelevantHandler(req, res)
+            } catch (e) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: e?.message || '관련 메모리 조회 실패' }))
+            }
+          })
+        },
+      },
 
-              if (provider === 'ollama') {
-                try {
-                  const upstream = await fetch(`${ollamaBaseUrl}/api/chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      ...payload,
-                      model: payload.model || 'llama3.1:8b',
-                      stream: payload.stream ?? false,
-                    }),
-                  })
-                  const data = await upstream.json().catch(() => ({}))
-                  res.setHeader('Content-Type', 'application/json')
-                  res.statusCode = upstream.status
-                  res.end(JSON.stringify(data))
-                } catch (e) {
-                  res.statusCode = 500
-                  res.setHeader('Content-Type', 'application/json')
-                  res.end(JSON.stringify({ error: `로컬 Ollama 연결 실패: ${e.message}` }))
-                }
-                return
-              }
-
-              payload.model = groqModel
-              if (!groqApiKey) {
+      {
+        name: 'debates-complete-api',
+        configureServer(server) {
+          server.middlewares.use('/api/debates/complete', (req, res) => {
+            if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
+            let body = ''
+            req.on('data', chunk => (body += chunk))
+            req.on('end', async () => {
+              try {
+                attachQueryParams(req)
+                req.body = body
+                await debatesCompleteHandler(req, res)
+              } catch (e) {
                 res.statusCode = 500
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: 'GROQ_API_KEY 미설정' }))
-                return
+                res.end(JSON.stringify({ error: e?.message || '토론 저장 실패' }))
               }
-
-              const MAX_RETRIES = 6
-              const sleep = (ms) => new Promise(r => setTimeout(r, ms))
-              const serializedBody = JSON.stringify(payload)
-              for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                try {
-                  const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${groqApiKey}`,
-                      'Content-Type': 'application/json',
-                    },
-                    body: serializedBody,
-                  })
-                  const data = await upstream.json()
-
-                  if (upstream.status === 429) {
-                    const msg = data?.error?.message || ''
-                    const match = msg.match(/try again in ([\d.]+)s/)
-                    const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 15000
-                    console.log(`[Groq 429] ${Math.round(waitMs/1000)}초 대기 후 재시도... (${attempt + 1}/${MAX_RETRIES})`)
-                    await sleep(waitMs)
-                    continue
-                  }
-
-                  res.setHeader('Content-Type', 'application/json')
-                  res.statusCode = upstream.status
-                  res.end(JSON.stringify(data))
-                  return
-                } catch (e) {
-                  if (attempt === MAX_RETRIES - 1) {
-                    res.statusCode = 500
-                    res.end(JSON.stringify({ error: e.message }))
-                    return
-                  }
-                  await sleep(3000)
-                }
-              }
-              res.statusCode = 429
-              res.end(JSON.stringify({ error: '최대 재시도 횟수 초과. 잠시 후 다시 시도하세요.' }))
             })
           })
         },

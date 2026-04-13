@@ -42,12 +42,21 @@ def main():
     elif os.environ.get("HF_LORA_REPO"):
         model_artifact_uri_base = f"hf://{os.environ['HF_LORA_REPO'].strip('/')}/runs/{os.environ.get('MODEL_RUN_ID', 'manual-run')}/merged"
 
+    model_adapter_uri_base = ""
+    if artifact_target == "supabase":
+        model_bucket = os.environ.get("SUPABASE_MODEL_BUCKET") or os.environ.get("SUPABASE_DATASET_BUCKET") or "training-datasets"
+        model_adapter_uri_base = f"supabase://{model_bucket}/runs/{os.environ.get('MODEL_RUN_ID', 'manual-run')}/lora"
+    elif os.environ.get("HF_LORA_REPO"):
+        model_adapter_uri_base = f"hf://{os.environ['HF_LORA_REPO'].strip('/')}/runs/{os.environ.get('MODEL_RUN_ID', 'manual-run')}/lora"
+
     run_step(
         [sys.executable, "scripts/merge-and-register.py", "--god", args.god],
         {
             "SKIP_GGUF_CONVERSION": "1",
             "SKIP_OLLAMA_REGISTER": "1",
             "MODEL_ARTIFACT_URI_BASE": model_artifact_uri_base,
+            "MODEL_ADAPTER_URI_BASE": model_adapter_uri_base,
+            "MODEL_SERVING_PROVIDER": os.environ.get("MODEL_SERVING_PROVIDER", "custom-openai-compatible"),
         },
     )
 

@@ -2,11 +2,25 @@
   "servers": {
     "supabase": {
       "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=ficrhsijzkzjqstnchju&features=database,docs,debugging,development,functions"
+    },
+    "supabaseReadOnly": {
+      "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=ficrhsijzkzjqstnchju&read_only=true&features=database,docs,debugging,development"
     },
-    "supabaseWrite": {
-      "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=ficrhsijzkzjqstnchju&features=database,docs,debugging,development,functions"
+    "gcpCompute": {
+      "type": "stdio",
+      "command": "ssh",
+      "args": [
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "LogLevel=ERROR",
+        "-i",
+        "${env:USERPROFILE}/.ssh/google_compute_engine",
+        "fancy@34.56.232.61",
+        "cd /opt/muel/discord-news-bot && set -a && . config/env/unified-mcp.gcp.env && set +a && exec node --import tsx scripts/unified-mcp-stdio.ts"
+      ]
     }
   }
 }

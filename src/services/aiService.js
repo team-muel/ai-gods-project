@@ -23,6 +23,7 @@ const IS_DEV = import.meta.env.DEV === true
 const CHAT_API_URL = '/api/chat'
 const DEFAULT_JUDGE_SAMPLING = { temperature: 0.2, top_p: 0.65, max_tokens: 500 }
 const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 간결하게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
+const ENABLE_OLLAMA_FALLBACK = String(import.meta.env.VITE_ENABLE_OLLAMA_FALLBACK || 'false').trim().toLowerCase() === 'true'
 
 const unique = (items) => [...new Set(items.filter(Boolean))]
 
@@ -57,11 +58,12 @@ const extractAssistantContent = (data) => (
   '응답을 받지 못했습니다.'
 )
 
-const callGroq = async (systemPrompt, userMessage, maxTokens, temperature, top_p) => {
+const callRemoteRuntime = async (agentId, systemPrompt, userMessage, maxTokens, temperature, top_p) => {
   const response = await fetch(CHAT_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      agentId,
       model: REMOTE_RUNTIME_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -75,18 +77,19 @@ const callGroq = async (systemPrompt, userMessage, maxTokens, temperature, top_p
 
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(`Groq 오류: ${response.status} — ${extractErrorMessage(data, '알 수 없는 오류')}`)
+    throw new Error(`채팅 런타임 오류: ${response.status} — ${extractErrorMessage(data, '알 수 없는 오류')}`)
   }
 
   return extractAssistantContent(data)
 }
 
-const tryLocalModel = async (model, messages, options) => {
+const tryLocalModel = async (agentId, model, messages, options) => {
   try {
     const response = await fetch(CHAT_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        agentId,
         provider: 'ollama',
         model,
         messages,
@@ -113,7 +116,7 @@ const callLocalRuntimeWithFallback = async (agentId, messages, options) => {
   const candidates = unique([agent?.runtime?.localModel, LOCAL_RUNTIME_FALLBACK_MODEL])
 
   for (const model of candidates) {
-    const content = await tryLocalModel(model, messages, options)
+    const content = await tryLocalModel(agentId, model, messages, options)
     if (content !== null) return content
   }
 
@@ -158,17 +161,22 @@ const getRuntimeSampling = (agentId, maxTokens, arousalParams) => {
 }
 
 const callAngelModel = async (userMessage) => {
-  if (IS_DEV) {
+  try {
+    return await callRemoteRuntime(JUDGE_AGENT_ID, ANGEL_SYSTEM_PROMPT, userMessage, 150, 0.5, 0.9)
+  } catch (error) {
+    if (!(IS_DEV && ENABLE_OLLAMA_FALLBACK)) {
+      throw error
+    }
+
     const content = await callLocalRuntimeWithFallback(
       JUDGE_AGENT_ID,
       [{ role: 'system', content: ANGEL_SYSTEM_PROMPT }, { role: 'user', content: userMessage }],
       { num_predict: 150, temperature: 0.5, top_p: 0.9 }
     )
     if (content !== null) return content
-    console.warn('[Dev] 로컬 천사 요약 실패 → Groq 폴백')
+    console.warn('[Dev] /api/chat 천사 요약 실패 → Ollama fallback도 실패')
+    throw error
   }
-
-  return await callGroq(ANGEL_SYSTEM_PROMPT, userMessage, 150, 0.5, 0.9)
 }
 
 export const angelSummarize = async (godId, godName, opinion) => {
@@ -186,7 +194,13 @@ const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = 
   ].filter(Boolean).join('\n\n')
   const sampling = getRuntimeSampling(agentId, maxTokens, arousalParams)
 
-  if (IS_DEV) {
+  try {
+    return await callRemoteRuntime(agentId, combinedSystem, userMessage, sampling.maxTokens, sampling.temperature, sampling.top_p)
+  } catch (error) {
+    if (!(IS_DEV && ENABLE_OLLAMA_FALLBACK)) {
+      throw error
+    }
+
     const localResult = await callLocalRuntimeWithFallback(
       agentId,
       [
@@ -197,10 +211,9 @@ const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = 
     )
     if (localResult !== null) return localResult
 
-    console.warn(`[Dev] 로컬 Ollama 완전 실패 → Groq 폴백 (${agentId})`)
+    console.warn(`[Dev] /api/chat 실패 후 Ollama fallback도 실패 (${agentId})`)
+    throw error
   }
-
-  return await callGroq(combinedSystem, userMessage, sampling.maxTokens, sampling.temperature, sampling.top_p)
 }
 
 export const callAI = async (godId, topic, transcript = null) => {
