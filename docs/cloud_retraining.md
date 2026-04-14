@@ -50,6 +50,8 @@ GCP GPU VM 에 바로 붙일 수 있도록 이 저장소에는 [scripts/remote-t
 - REMOTE_TRAINING_PROVIDER 선택, 기본값 generic-webhook
 - REMOTE_TRAINING_SIGNED_URL_EXPIRES_IN 선택, 기본값 86400
 
+임시로 원격 GPU 공급자를 쓰지 못하는 기간에는 REMOTE_TRAINING_PROVIDER=paused 로 두면 된다. 이 경우 dataset 준비와 기록은 유지하되, train-remote-cloud job 과 원격 웹훅 호출은 clean skip 된다.
+
 ### Environment variables / Organization variables 는 언제 쓰나
 
 - Environment variables: production, staging 같이 GitHub Environment 를 workflow 에 명시해서 분리 운영할 때만 사용합니다. 현재 워크플로는 environment: 를 선언하지 않으므로 여기 넣어도 자동으로 읽지 않습니다.

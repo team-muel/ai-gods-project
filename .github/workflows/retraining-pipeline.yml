@@ -241,7 +241,7 @@ jobs:
 
   train-remote-cloud:
     needs: [readiness, prepare-datasets]
-    if: needs.prepare-datasets.result == 'success' && (needs.readiness.outputs.recommended_for_training == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_remote_training))
+    if: vars.REMOTE_TRAINING_PROVIDER != 'paused' && needs.prepare-datasets.result == 'success' && (needs.readiness.outputs.recommended_for_training == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_remote_training))
     runs-on: ubuntu-latest
 
     steps:

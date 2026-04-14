@@ -75,6 +75,7 @@ const main = async () => {
   const webhookUrl = resolveEnv('REMOTE_TRAINING_WEBHOOK_URL')
   const webhookToken = resolveEnv('REMOTE_TRAINING_BEARER_TOKEN')
   const provider = resolveEnv('REMOTE_TRAINING_PROVIDER') || 'generic-webhook'
+  const paused = ['paused', 'disabled', 'off', 'none'].includes(provider.trim().toLowerCase())
   const artifactTarget = (resolveEnv('MODEL_ARTIFACT_TARGET') || 'huggingface').toLowerCase()
   const supabase = buildSupabaseClient()
   const signedUrlExpiresIn = Number.parseInt(resolveEnv('REMOTE_TRAINING_SIGNED_URL_EXPIRES_IN') || '86400', 10) || 86400
@@ -128,7 +129,9 @@ const main = async () => {
   }
 
   let responseBody = { skipped: true, reason: 'webhook_not_configured' }
-  if (webhookUrl) {
+  if (paused) {
+    responseBody = { skipped: true, reason: 'remote_training_paused', provider }
+  } else if (webhookUrl) {
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
@@ -156,7 +159,7 @@ const main = async () => {
 
   await writeGithubOutputs({
     remote_training_provider: provider,
-    remote_training_triggered: webhookUrl ? 'true' : 'false',
+    remote_training_triggered: !paused && webhookUrl ? 'true' : 'false',
     remote_training_job_id: responseBody?.jobId || responseBody?.id || '',
     remote_training_request: path.relative(projectRoot, args.out),
   })
