@@ -70,12 +70,20 @@ jobs:
       - name: gcloud 설정
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Compute Engine API 활성화
+      - name: Compute API 접근 확인
         shell: bash
         run: |
           set -euo pipefail
 
-          gcloud services enable compute.googleapis.com
+          if gcloud compute project-info describe >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          cat >&2 <<'EOF'
+          Compute Engine API 를 현재 GitHub 서비스 계정으로 사용할 수 없습니다.
+          프로젝트 owner 계정으로 Compute Engine API 를 먼저 활성화한 뒤 다시 실행하세요.
+          EOF
+          exit 1
 
       - name: GPU VM 생성 또는 재사용
         id: create_vm
@@ -113,6 +121,8 @@ jobs:
               --image-project deeplearning-platform-release \
               --image-family "$IMAGE_FAMILY" \
               --address "$PUBLIC_IP" \
+              --no-service-account \
+              --no-scopes \
               --tags http-server,https-server \
               --metadata-from-file startup-script=deploy/gcp_remote_training_startup.sh
           fi
