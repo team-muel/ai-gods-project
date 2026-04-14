@@ -70,6 +70,13 @@ jobs:
       - name: gcloud 설정
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Compute Engine API 활성화
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud services enable compute.googleapis.com
+
       - name: GPU VM 생성 또는 재사용
         id: create_vm
         shell: bash
