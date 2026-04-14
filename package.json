@@ -23,6 +23,7 @@
     "train:dpo": "npm run export-data:dpo && python scripts/train_dpo.py",
     "export-data:dpo": "python scripts/generate_dpo_data.py",
     "train:cloud": "python scripts/run-cloud-training.py --god all",
+    "serve:remote-webhook": "python scripts/remote-training-webhook.py",
     "serve:model": "python scripts/god-server.py",
     "train:remote-trigger": "node --env-file=.env scripts/trigger-remote-training.mjs",
     "promote:model": "node --env-file=.env scripts/promote-model-version.mjs",

@@ -1,0 +1,15 @@
+[Unit]
+Description=AI Gods Remote Training Webhook
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ai-gods-project-remote
+EnvironmentFile=/opt/ai-gods-project-remote/.env
+ExecStart=/opt/ai-gods-project-remote/.venv/bin/python scripts/remote-training-webhook.py --host 0.0.0.0 --port 8787
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

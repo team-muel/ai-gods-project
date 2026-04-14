@@ -8,6 +8,8 @@
 2. scripts/trigger-remote-training.mjs 가 원격 GPU 서비스에 signed URL 기반 학습 요청을 보냅니다.
 3. 원격 GPU 서비스가 scripts/run-cloud-training.py 를 실행하면 학습, 퍼블리시, 그리고 선택적으로 scripts/activate-serving-stack.py 를 통한 HF Space 재기동과 Vercel 재배포까지 이어질 수 있습니다.
 
+GCP GPU VM 에 바로 붙일 수 있도록 이 저장소에는 [scripts/remote-training-webhook.py](../scripts/remote-training-webhook.py) 와 [docs/gcp_remote_training_webhook.md](gcp_remote_training_webhook.md) 도 포함되어 있습니다.
+
 추가로 ONLINE_LEARNING_ENABLED=true 를 켜면, 웹 앱에서 토론이 끝난 직후 api/debates/complete.js 가 reward/preference 신호를 보고 retraining workflow 를 자동 dispatch 하는 near-online 경로를 사용할 수 있습니다.
 
 ## GitHub 설정 위치
