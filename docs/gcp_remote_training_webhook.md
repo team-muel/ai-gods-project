@@ -25,7 +25,9 @@
 sudo apt update
 sudo apt install -y git python3.11 python3.11-venv python3-pip
 
-cd /opt
+sudo mkdir -p /opt/muel
+sudo chown fancy:fancy /opt/muel
+cd /opt/muel
 git clone https://github.com/team-muel/ai-gods-project.git ai-gods-project-remote
 cd ai-gods-project-remote
 
@@ -85,7 +87,7 @@ SERVING_ALLOW_BASE_FALLBACK=true
 수동 실행은 아래 한 줄이다.
 
 ```bash
-cd /opt/ai-gods-project-remote
+cd /opt/muel/ai-gods-project-remote
 source .venv/bin/activate
 python scripts/remote-training-webhook.py --host 0.0.0.0 --port 8787
 ```
@@ -119,7 +121,7 @@ sudo systemctl enable --now ai-gods-remote-training-webhook
 sudo systemctl status ai-gods-remote-training-webhook
 ```
 
-필요하면 ExecStart 와 User 를 VM 환경에 맞게 바꾼다.
+현재 템플릿은 이 프로젝트에서 실제로 쓰는 fancy 사용자와 /opt/muel/ai-gods-project-remote 경로 기준으로 맞춰져 있다. 다른 VM 에 붙일 때만 ExecStart 와 User 를 바꾼다.
 
 ## 6. 공개 엔드포인트 열기
 
