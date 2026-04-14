@@ -1,0 +1,244 @@
+name: GCP GPU Remote Training VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm_name:
+        description: GPU training VM name
+        required: false
+        default: ai-gods-gpu-train
+        type: string
+      zone:
+        description: Compute Engine zone
+        required: false
+        default: us-central1-c
+        type: string
+      machine_type:
+        description: Machine type for the GPU trainer
+        required: false
+        default: n1-standard-4
+        type: string
+      accelerator_type:
+        description: Accelerator type
+        required: false
+        default: nvidia-tesla-t4
+        type: string
+      accelerator_count:
+        description: Accelerator count
+        required: false
+        default: '1'
+        type: string
+      disk_size_gb:
+        description: Boot disk size in GB
+        required: false
+        default: '200'
+        type: string
+      image_family:
+        description: Deep Learning VM image family
+        required: false
+        default: common-cu128-ubuntu-2204-nvidia-570
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      VM_NAME: ${{ inputs.vm_name }}
+      ZONE: ${{ inputs.zone }}
+      MACHINE_TYPE: ${{ inputs.machine_type }}
+      ACCELERATOR_TYPE: ${{ inputs.accelerator_type }}
+      ACCELERATOR_COUNT: ${{ inputs.accelerator_count }}
+      DISK_SIZE_GB: ${{ inputs.disk_size_gb }}
+      IMAGE_FAMILY: ${{ inputs.image_family }}
+      REPO_DIR: /opt/muel/ai-gods-project-remote
+      JOB_ROOT: /opt/muel/ai-gods-remote-jobs
+      REMOTE_USER: fancy
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Google Cloud 인증
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+
+      - name: gcloud 설정
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: GPU VM 생성 또는 재사용
+        id: create_vm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REGION="${ZONE%-*}"
+          ADDRESS_NAME="${VM_NAME}-ip"
+
+          if ! gcloud compute addresses describe "$ADDRESS_NAME" --region "$REGION" >/dev/null 2>&1; then
+            gcloud compute addresses create "$ADDRESS_NAME" --region "$REGION"
+          fi
+
+          PUBLIC_IP="$(gcloud compute addresses describe "$ADDRESS_NAME" --region "$REGION" --format='value(address)')"
+
+          if gcloud compute instances describe "$VM_NAME" --zone "$ZONE" >/dev/null 2>&1; then
+            INSTANCE_STATUS="$(gcloud compute instances describe "$VM_NAME" --zone "$ZONE" --format='value(status)')"
+            CURRENT_IP="$(gcloud compute instances describe "$VM_NAME" --zone "$ZONE" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+            if [[ -n "$CURRENT_IP" ]]; then
+              PUBLIC_IP="$CURRENT_IP"
+            fi
+            if [[ "$INSTANCE_STATUS" != "RUNNING" ]]; then
+              gcloud compute instances start "$VM_NAME" --zone "$ZONE"
+            fi
+          else
+            gcloud compute instances create "$VM_NAME" \
+              --zone "$ZONE" \
+              --machine-type "$MACHINE_TYPE" \
+              --accelerator "type=${ACCELERATOR_TYPE},count=${ACCELERATOR_COUNT}" \
+              --maintenance-policy TERMINATE \
+              --restart-on-failure \
+              --boot-disk-size "${DISK_SIZE_GB}GB" \
+              --boot-disk-type pd-ssd \
+              --image-project deeplearning-platform-release \
+              --image-family "$IMAGE_FAMILY" \
+              --address "$PUBLIC_IP" \
+              --tags http-server,https-server \
+              --metadata-from-file startup-script=deploy/gcp_remote_training_startup.sh
+          fi
+
+          echo "region=${REGION}" >> "$GITHUB_OUTPUT"
+          echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
+          echo "public_host=${PUBLIC_IP}.sslip.io" >> "$GITHUB_OUTPUT"
+
+      - name: SSH 준비 대기
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 30); do
+            if gcloud compute ssh "$VM_NAME" --zone "$ZONE" --ssh-key-expire-after=30m --command "echo ready" >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "waiting for ssh: attempt ${attempt}"
+            sleep 10
+          done
+
+          echo "SSH did not become ready in time" >&2
+          exit 1
+
+      - name: 원격 .env 생성
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export HF_LORA_REPO='${{ vars.HF_LORA_REPO }}'
+          export HF_SPACE_ID='${{ vars.HF_SPACE_ID }}'
+          export VERCEL_PROJECT_ID='${{ vars.VERCEL_PROJECT_ID }}'
+          export VERCEL_PROJECT_NAME='${{ vars.VERCEL_PROJECT_NAME }}'
+          export VERCEL_TEAM_ID='${{ vars.VERCEL_TEAM_ID }}'
+          export REMOTE_TRAINING_BEARER_TOKEN='${{ secrets.REMOTE_TRAINING_BEARER_TOKEN }}'
+          export HF_TOKEN='${{ secrets.HF_TOKEN }}'
+          export SUPABASE_URL='${{ secrets.SUPABASE_URL }}'
+          export SUPABASE_SERVICE_ROLE_KEY='${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}'
+          export SUPABASE_ANON_KEY='${{ secrets.SUPABASE_ANON_KEY }}'
+          export VERCEL_TOKEN='${{ secrets.VERCEL_TOKEN }}'
+
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          lines = [
+              'REMOTE_WEBHOOK_HOST=0.0.0.0',
+              'REMOTE_WEBHOOK_PORT=8788',
+              f"REMOTE_WEBHOOK_TOKEN={os.environ['REMOTE_TRAINING_BEARER_TOKEN']}",
+              f"REMOTE_TRAINING_REPO_DIR={os.environ['REPO_DIR']}",
+              f"REMOTE_TRAINING_JOB_ROOT={os.environ['JOB_ROOT']}",
+              'REMOTE_TRAINING_AUTO_GIT_PULL=false',
+              'REMOTE_TRAINING_ALLOW_CONCURRENT=false',
+              'REMOTE_TRAINING_ENABLE_PUBLISH=true',
+              'REMOTE_TRAINING_ENABLE_ACTIVATION=true',
+              'REMOTE_TRAINING_INCLUDE_MERGED=false',
+              'REMOTE_TRAINING_DEFAULT_GOD=all',
+              'REMOTE_TRAINING_REQUIRE_GPU=true',
+              '',
+              'MODEL_ARTIFACT_TARGET=huggingface',
+              f"HF_TOKEN={os.environ['HF_TOKEN']}",
+              f"HF_LORA_REPO={os.environ['HF_LORA_REPO']}",
+              f"HF_SPACE_ID={os.environ['HF_SPACE_ID']}",
+              '',
+              f"SUPABASE_URL={os.environ['SUPABASE_URL']}",
+              f"SUPABASE_SERVICE_ROLE_KEY={os.environ['SUPABASE_SERVICE_ROLE_KEY']}",
+              f"SUPABASE_ANON_KEY={os.environ['SUPABASE_ANON_KEY']}",
+              '',
+              f"VERCEL_TOKEN={os.environ['VERCEL_TOKEN']}",
+              f"VERCEL_PROJECT_ID={os.environ['VERCEL_PROJECT_ID']}",
+              f"VERCEL_PROJECT_NAME={os.environ['VERCEL_PROJECT_NAME']}",
+              f"VERCEL_TEAM_ID={os.environ['VERCEL_TEAM_ID']}",
+              'VERCEL_DEPLOY_TARGET=production',
+              '',
+              'POST_TRAIN_ACTIVATE_STACK=1',
+              'SERVING_ALLOW_BASE_FALLBACK=true',
+              'PYTHONUTF8=1',
+              'PYTHONIOENCODING=utf-8',
+          ]
+          Path('/tmp/ai-gods-remote-training.env').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+
+      - name: bootstrap 파일 전송
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud compute scp /tmp/ai-gods-remote-training.env deploy/bootstrap_remote_training_vm.sh "$VM_NAME":/tmp/ --zone "$ZONE" --ssh-key-expire-after=30m
+
+      - name: GPU VM bootstrap 실행
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud compute ssh "$VM_NAME" --zone "$ZONE" --ssh-key-expire-after=30m --command "chmod +x /tmp/bootstrap_remote_training_vm.sh && PUBLIC_HOST='${{ steps.create_vm.outputs.public_host }}' REMOTE_USER='${REMOTE_USER}' REPO_DIR='${REPO_DIR}' JOB_ROOT='${JOB_ROOT}' ENV_TMP_PATH='/tmp/ai-gods-remote-training.env' /tmp/bootstrap_remote_training_vm.sh"
+
+      - name: 공개 health 검증
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HEALTH_URL="https://${{ steps.create_vm.outputs.public_host }}/ai-gods-train/healthz"
+          for attempt in $(seq 1 20); do
+            if curl -fsS --max-time 60 "$HEALTH_URL" > /tmp/remote-health.json; then
+              break
+            fi
+            echo "waiting for public health: attempt ${attempt}"
+            sleep 15
+          done
+
+          jq . /tmp/remote-health.json
+          jq -e '.gpu.available == true' /tmp/remote-health.json >/dev/null
+
+      - name: 배포 정보 저장
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          jq -n \
+            --arg projectId '${{ steps.auth.outputs.project_id }}' \
+            --arg vmName "$VM_NAME" \
+            --arg zone "$ZONE" \
+            --arg region '${{ steps.create_vm.outputs.region }}' \
+            --arg publicIp '${{ steps.create_vm.outputs.public_ip }}' \
+            --arg publicHost '${{ steps.create_vm.outputs.public_host }}' \
+            --arg webhookUrl 'https://${{ steps.create_vm.outputs.public_host }}/ai-gods-train/train' \
+            --arg healthUrl 'https://${{ steps.create_vm.outputs.public_host }}/ai-gods-train/healthz' \
+            '{projectId:$projectId,vmName:$vmName,zone:$zone,region:$region,publicIp:$publicIp,publicHost:$publicHost,webhookUrl:$webhookUrl,healthUrl:$healthUrl}' \
+            > /tmp/gcp-gpu-vm-deployment.json
+
+      - name: 배포 정보 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcp-gpu-vm-deployment
+          path: /tmp/gcp-gpu-vm-deployment.json
+          if-no-files-found: error

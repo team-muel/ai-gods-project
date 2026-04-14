@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,11 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
+
+GPU_STATUS_CACHE = {
+    "checkedAt": 0.0,
+    "payload": None,
+}
 
 
 def resolve_env(*keys):
@@ -55,6 +61,13 @@ def webhook_token():
     return resolve_env("REMOTE_WEBHOOK_TOKEN", "REMOTE_TRAINING_BEARER_TOKEN")
 
 
+def require_gpu():
+    value = resolve_env("REMOTE_TRAINING_REQUIRE_GPU")
+    if value == "":
+        return True
+    return truthy(value)
+
+
 def payload_path(job_id):
     return job_root() / job_id / "payload.json"
 
@@ -67,11 +80,66 @@ def log_path(job_id):
     return job_root() / job_id / "job.log"
 
 
+def gpu_status(force=False):
+    if not require_gpu():
+        return {
+            "required": False,
+            "available": True,
+            "reason": "gpu_requirement_disabled",
+        }
+
+    ttl_seconds = int(resolve_env("REMOTE_TRAINING_GPU_STATUS_TTL") or "30")
+    now = time.time()
+    cached = GPU_STATUS_CACHE.get("payload")
+    checked_at = float(GPU_STATUS_CACHE.get("checkedAt") or 0.0)
+    if not force and cached and (now - checked_at) < ttl_seconds:
+        return cached
+
+    nvidia_devices = sorted(str(path) for path in Path("/dev").glob("nvidia*"))
+    nvidia_smi = shutil.which("nvidia-smi") or ""
+
+    torch_checked = False
+    torch_cuda = False
+    torch_devices = []
+    torch_error = ""
+    try:
+        import torch
+
+        torch_checked = True
+        torch_cuda = bool(torch.cuda.is_available())
+        if torch_cuda:
+            torch_devices = [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
+    except Exception as error:
+        torch_error = str(error)
+
+    available = torch_cuda if torch_checked else bool(nvidia_devices and nvidia_smi)
+    payload = {
+        "required": True,
+        "available": available,
+        "checkedAt": utc_now_iso(),
+        "nvidiaDevices": nvidia_devices,
+        "nvidiaSmi": nvidia_smi,
+    }
+    if torch_checked:
+        payload["torchCudaAvailable"] = torch_cuda
+    if torch_devices:
+        payload["torchDevices"] = torch_devices
+    if torch_error:
+        payload["torchError"] = torch_error
+    if not available:
+        payload["reason"] = "gpu_not_detected"
+        payload["message"] = "이 VM 에서는 CUDA GPU를 찾지 못해 원격 학습을 수락할 수 없습니다."
+
+    GPU_STATUS_CACHE["checkedAt"] = now
+    GPU_STATUS_CACHE["payload"] = payload
+    return payload
+
+
 def read_json(file_path, fallback=None):
     path = Path(file_path)
     if not path.exists():
         return {} if fallback is None else fallback
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, "r", encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 
@@ -289,6 +357,10 @@ def run_job(payload_file_path):
     payload = read_json(payload_file_path, fallback={})
 
     try:
+        gpu = gpu_status(force=True)
+        if require_gpu() and not gpu.get("available"):
+            raise RuntimeError(gpu.get("message") or "CUDA GPU 를 찾지 못했습니다.")
+
         update_status(job_id, status="running", startedAt=utc_now_iso())
         maybe_git_pull()
         staged = stage_payload_inputs(job_id, payload)
@@ -387,6 +459,7 @@ class RemoteTrainingHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "service": "ai-gods-remote-training-webhook",
                 "activeJob": current_active,
+                "gpu": gpu_status(),
                 "repoDir": str(repo_dir()),
                 "jobRoot": str(job_root()),
             })
@@ -423,6 +496,14 @@ class RemoteTrainingHandler(BaseHTTPRequestHandler):
 
         if not ensure_authorized(self):
             return request_json(self, HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+
+        gpu = gpu_status(force=True)
+        if require_gpu() and not gpu.get("available"):
+            return request_json(self, HTTPStatus.SERVICE_UNAVAILABLE, {
+                "accepted": False,
+                "reason": "gpu_unavailable",
+                "gpu": gpu,
+            })
 
         try:
             payload = parse_request_body(self)
@@ -461,6 +542,7 @@ def serve(args):
         "repoDir": str(repo_dir()),
         "jobRoot": str(job_root()),
         "tokenConfigured": bool(webhook_token()),
+        "gpu": gpu_status(force=True),
     }, ensure_ascii=False))
     server.serve_forever()
 

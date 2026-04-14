@@ -27,6 +27,19 @@ def run_step(command, extra_env=None):
         raise SystemExit(result.returncode)
 
 
+def ensure_gpu_ready():
+    if not truthy(os.environ.get("REMOTE_TRAINING_REQUIRE_GPU"), True):
+        return
+
+    try:
+        import torch
+    except Exception as error:
+        raise SystemExit(f"원격 학습은 CUDA GPU 러너가 필요합니다. torch import 실패: {error}")
+
+    if not torch.cuda.is_available():
+        raise SystemExit("원격 학습은 CUDA GPU 러너가 필요합니다. 현재 러너에서 CUDA GPU를 찾지 못했습니다.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="클라우드 러너용 자동 재학습 파이프라인")
     parser.add_argument("--god", default="all")
@@ -35,6 +48,8 @@ def main():
     parser.add_argument("--skip-activation", action="store_true")
     parser.add_argument("--include-merged", action="store_true")
     args = parser.parse_args()
+
+    ensure_gpu_ready()
 
     run_step([sys.executable, "scripts/finetune-god.py", "--god", args.god])
 
