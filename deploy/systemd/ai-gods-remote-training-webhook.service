@@ -7,7 +7,7 @@ Type=simple
 User=fancy
 WorkingDirectory=/opt/muel/ai-gods-project-remote
 EnvironmentFile=/opt/muel/ai-gods-project-remote/.env
-ExecStart=/opt/muel/ai-gods-project-remote/.venv/bin/python scripts/remote-training-webhook.py --host 0.0.0.0 --port 8787
+ExecStart=/opt/muel/ai-gods-project-remote/.venv/bin/python scripts/remote-training-webhook.py --host 0.0.0.0 --port 8788
 Restart=always
 RestartSec=5
 
