@@ -73,10 +73,79 @@ const USE_OBSIDIAN_CONTEXT = readBooleanFlag(import.meta.env.VITE_AI_USE_OBSIDIA
 const DEFAULT_JUDGE_SAMPLING = { temperature: 0.2, top_p: 0.65, max_tokens: JUDGE_MAX_TOKENS }
 const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점으로 2개만 짧게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
 const ENABLE_OLLAMA_FALLBACK = String(import.meta.env.VITE_ENABLE_OLLAMA_FALLBACK || 'false').trim().toLowerCase() === 'true'
+const ANGEL_SUMMARY_MODE = String(import.meta.env.VITE_AI_ANGEL_SUMMARY_MODE || (IS_DEV ? 'model' : 'local')).trim().toLowerCase()
+const INITIAL_SEARCH_CACHE_LIMIT = 8
+const initialSearchCache = new Map()
 
 const unique = (items) => [...new Set(items.filter(Boolean))]
 const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim()
 const trimForPrompt = (value, limit) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit)
+
+const cleanSummaryLine = (value = '') => cleanText(
+  String(value || '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[-•*]\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+)
+
+const pruneInitialSearchCache = () => {
+  while (initialSearchCache.size > INITIAL_SEARCH_CACHE_LIMIT) {
+    const oldestKey = initialSearchCache.keys().next().value
+    if (!oldestKey) return
+    initialSearchCache.delete(oldestKey)
+  }
+}
+
+const getInitialSearchCacheKey = (topic = '') => `${INITIAL_SEARCH_RESULT_COUNT}:${cleanText(topic).toLowerCase()}`
+
+const getInitialSearchData = async (topic = '') => {
+  const normalizedTopic = cleanText(topic)
+  if (!normalizedTopic || INITIAL_SEARCH_RESULT_COUNT === 0) return null
+
+  const cacheKey = getInitialSearchCacheKey(normalizedTopic)
+  if (initialSearchCache.has(cacheKey)) {
+    return await initialSearchCache.get(cacheKey)
+  }
+
+  const pending = searchWeb(normalizedTopic, INITIAL_SEARCH_RESULT_COUNT)
+    .catch(() => null)
+
+  initialSearchCache.set(cacheKey, pending)
+  pruneInitialSearchCache()
+  return await pending
+}
+
+const sentenceSplit = (value = '') => String(value || '')
+  .split(/(?<=[.!?。])\s+|\n+/)
+  .map((part) => cleanSummaryLine(part))
+  .filter(Boolean)
+
+const buildLocalAngelSummary = (opinion = '') => {
+  const lines = String(opinion || '')
+    .split(/\n+/)
+    .map((line) => cleanSummaryLine(line))
+    .filter(Boolean)
+
+  const preferredLines = lines
+    .map((line) => {
+      const structured = line.match(/^(반응 대상|판단|근거|제안|핵심|요지|결론)\s*[:：]\s*(.+)$/)
+      return structured ? structured[2] : ''
+    })
+    .filter(Boolean)
+
+  const selected = (preferredLines.length > 0 ? preferredLines : sentenceSplit(opinion))
+    .map((line) => trimForPrompt(line, 120))
+    .filter((line) => line.length >= 12)
+    .slice(0, 2)
+
+  if (selected.length === 0) {
+    const fallback = trimForPrompt(cleanSummaryLine(opinion), 180) || '핵심 의견을 다시 확인해야 합니다.'
+    return `• ${fallback}`
+  }
+
+  return selected.map((line) => `• ${line}`).join('\n')
+}
 
 const countMatches = (value = '', pattern) => (String(value || '').match(pattern) || []).length
 
@@ -345,8 +414,18 @@ const callAngelModel = async (userMessage) => {
 }
 
 export const angelSummarize = async (godId, godName, opinion) => {
+  const fallbackSummary = buildLocalAngelSummary(opinion)
+  if (ANGEL_SUMMARY_MODE !== 'model') {
+    return fallbackSummary
+  }
+
   const prompt = `[${godName}의 의견]\n${trimForPrompt(opinion, ANGEL_SOURCE_CHARS)}\n\n위 의견의 핵심 주장 2가지를 불릿 포인트(•)로 간결하게 요약하세요.`
-  return await callAngelModel(prompt)
+  try {
+    const summary = await callAngelModel(prompt)
+    return isSuspiciousModelText(summary) ? fallbackSummary : summary
+  } catch {
+    return fallbackSummary
+  }
 }
 
 const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = null } = {}) => {
@@ -388,9 +467,10 @@ const callModel = async (agentId, userMessage, { phase = 'initial', maxTokens = 
 }
 
 export const callAI = async (godId, topic, transcript = null) => {
+  const searchPromise = transcript || INITIAL_SEARCH_RESULT_COUNT === 0 ? Promise.resolve(null) : getInitialSearchData(topic)
   const [memories, searchData, obsidianContext] = await Promise.all([
     getRelevantMemories(godId, topic),
-    transcript || INITIAL_SEARCH_RESULT_COUNT === 0 ? null : searchWeb(topic, INITIAL_SEARCH_RESULT_COUNT),
+    searchPromise,
     USE_OBSIDIAN_CONTEXT ? readFromObsidian(godId, topic) : '',
   ])
 

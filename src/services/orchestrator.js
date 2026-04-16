@@ -6,7 +6,7 @@ import { syncDebateToObsidian } from './obsidianService';
 
 const IS_DEV = import.meta.env.DEV;
 const readDelayFromEnv = () => {
-  const fallback = IS_DEV ? 1000 : 1000;
+  const fallback = IS_DEV ? 250 : 120;
   const parsed = Number.parseInt(import.meta.env.VITE_ORCHESTRATOR_CALL_DELAY_MS || String(fallback), 10);
   return Number.isNaN(parsed) ? fallback : Math.max(0, parsed);
 }
@@ -17,6 +17,10 @@ export const MIN_ROUNDS = IS_DEV ? 2 : 1;
 const CALL_DELAY = readDelayFromEnv();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const sleepBetweenTurns = async (index, total) => {
+  if (CALL_DELAY <= 0 || index >= total - 1) return;
+  await sleep(CALL_DELAY);
+}
 
 export class DiscussionOrchestrator {
   constructor() {
@@ -44,7 +48,7 @@ export class DiscussionOrchestrator {
     // ── Round 1: 초기 의견 발표 ──────────────────────────
     this._status('🌌 Round 1 · 초기 의견 수집 중...');
 
-    for (const god of AI_GODS) {
+    for (const [index, god] of AI_GODS.entries()) {
       this._status(`${god.symbol} ${god.name} 의견 작성 중...`);
       try {
         const result = await callAI(god.id, topic, transcript);
@@ -64,7 +68,7 @@ export class DiscussionOrchestrator {
       } catch (err) {
         console.error(`❌ ${god.name} Round 1:`, err);
       }
-      await sleep(CALL_DELAY);
+      await sleepBetweenTurns(index, AI_GODS.length);
     }
 
     if (this.messages.filter(message => !message.type).length === 0) {
@@ -81,7 +85,7 @@ export class DiscussionOrchestrator {
       const prevMsgs = this.messages.filter(m => m.round === round - 1 && !m.type);
       angelSummaries = {};
 
-      for (const msg of prevMsgs) {
+      for (const [index, msg] of prevMsgs.entries()) {
         this._status(`👼 ${msg.god}의 천사가 요약 중...`);
         try {
           const summary = await angelSummarize(msg.godId, msg.god, msg.content);
@@ -93,12 +97,12 @@ export class DiscussionOrchestrator {
           console.warn(`[Angel] ${msg.god} 요약 실패:`, e.message);
           angelSummaries[msg.godId] = msg.content.slice(0, 200);
         }
-        await sleep(CALL_DELAY);
+        await sleepBetweenTurns(index, prevMsgs.length);
       }
 
       this._status(`🔥 Round ${round} · 토론 진행 중...`);
 
-      for (const god of AI_GODS) {
+      for (const [index, god] of AI_GODS.entries()) {
         this._status(`${god.symbol} ${god.name} 반론/동의 작성 중...`);
         // 천사 요약본으로 다른 신들의 의견 전달 (없으면 원본 사용)
         const otherOpinions = prevMsgs
@@ -122,7 +126,7 @@ export class DiscussionOrchestrator {
         } catch (err) {
           console.error(`❌ ${god.name} Round ${round}:`, err);
         }
-        await sleep(CALL_DELAY);
+        await sleepBetweenTurns(index, AI_GODS.length);
       }
 
       const roundMessages = this.messages.filter(m => m.round === round && !m.type);
