@@ -7,11 +7,18 @@
  */
 
 import { supabase } from '../lib/supabase.js'
+import { buildDebateArtifacts, debateArtifactsToRows } from '../lib/artifactBuilder.js'
+import { buildDebateDossier } from '../lib/dossierBuilder.js'
+import { dossierClaimsToRows, evidenceItemsToRows, mergeEvidenceItems } from '../lib/debateEvidence.js'
 import { calcDecayScore, classifyRelationship, keywordSimilarity } from '../lib/memoryScoring.js'
 import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../lib/rewardLearning.js'
 import { postJson, requestJson } from './apiClient.js'
 
 const IS_DEV = import.meta.env.DEV === true
+const isMissingRelationError = (error) => {
+  const message = String(error?.message || '')
+  return message.includes('Could not find the table') || message.includes('does not exist')
+}
 
 // ── 토론 저장 (로컬 개발용 직접 저장) ─────────────────────
 
@@ -132,8 +139,79 @@ const saveRewardArtifactsDirect = async ({ debateId, topic, totalRounds, consens
   }
 }
 
-export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, consensus, messages }) => {
+const saveDebateDossierDirect = async (debateId, dossier) => {
+  if (!debateId || !dossier) return
+
+  const { error } = await supabase
+    .from('debate_dossiers')
+    .upsert({
+      debate_id: debateId,
+      topic: dossier.topic,
+      dossier_status: dossier.status,
+      executive_summary: dossier.executiveSummary,
+      markdown_content: dossier.markdown,
+      structured_content: dossier,
+      evidence_count: Number(dossier?.metrics?.evidenceCount || 0),
+      claim_count: Number(dossier?.metrics?.claimCount || 0),
+      action_item_count: Number(dossier?.metrics?.actionItemCount || 0),
+      metadata: {
+        readiness_score: dossier.readinessScore,
+        generated_at: dossier.generatedAt,
+        source: dossier.source,
+        schema_version: dossier.schemaVersion,
+      },
+    }, { onConflict: 'debate_id' })
+
+  if (error && !isMissingRelationError(error)) {
+    console.warn('dossier 저장 오류:', error)
+  }
+}
+
+const saveDebateEvidenceDirect = async (debateId, evidence) => {
+  const rows = evidenceItemsToRows({ debateId, evidence })
+  if (rows.length === 0) return
+
+  const { error } = await supabase.from('debate_evidence').insert(rows)
+  if (error && !isMissingRelationError(error)) {
+    console.warn('evidence 저장 오류:', error)
+  }
+}
+
+const saveDebateClaimsDirect = async (debateId, claims) => {
+  const rows = dossierClaimsToRows({ debateId, claims })
+  if (rows.length === 0) return
+
+  const { error } = await supabase.from('debate_claims').insert(rows)
+  if (error && !isMissingRelationError(error)) {
+    console.warn('claim 저장 오류:', error)
+  }
+}
+
+const saveDebateArtifactsDirect = async (debateId, artifacts) => {
+  const rows = debateArtifactsToRows({ debateId, artifacts })
+  if (rows.length === 0) return
+
+  const { error } = await supabase.from('debate_artifacts').insert(rows)
+  if (error && !isMissingRelationError(error)) {
+    console.warn('artifact 저장 오류:', error)
+  }
+}
+
+export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, consensus, messages, evidence = [] }) => {
   if (!Array.isArray(messages) || messages.length === 0) return null
+
+  const debateEvidence = mergeEvidenceItems(evidence)
+
+  const provisionalDossier = buildDebateDossier({
+    debateId: null,
+    topic,
+    totalRounds,
+    consensus,
+    messages,
+    evidence: debateEvidence,
+    isYoutube,
+    source: 'browser_debate_complete',
+  })
 
   try {
     const data = await postJson('/api/debates/complete', {
@@ -143,8 +221,17 @@ export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, conse
       consensus,
       physioLogged: true,
       messages,
+      evidence: debateEvidence,
     })
-    return data?.debateId || null
+    return {
+      debateId: data?.debateId || null,
+      dossier: data?.dossier || {
+        ...provisionalDossier,
+        debateId: data?.debateId || null,
+      },
+      artifacts: data?.artifacts || null,
+      onlineLearning: data?.onlineLearning || null,
+    }
   } catch (error) {
     if (!IS_DEV) {
       console.error('토론 저장 오류:', error)
@@ -181,20 +268,40 @@ export const saveCompletedDebate = async ({ topic, isYoutube, totalRounds, conse
     messages,
   })
 
-  return debateId
+  const dossier = buildDebateDossier({
+    debateId,
+    topic,
+    totalRounds,
+    consensus,
+    messages,
+    evidence: debateEvidence,
+    isYoutube,
+    source: 'browser_debate_complete',
+  })
+  const artifacts = buildDebateArtifacts({ dossier })
+
+  await saveDebateDossierDirect(debateId, dossier)
+  await saveDebateEvidenceDirect(debateId, dossier.evidence)
+  await saveDebateClaimsDirect(debateId, dossier.claims)
+  await saveDebateArtifactsDirect(debateId, artifacts)
+
+  return {
+    debateId,
+    dossier,
+    artifacts,
+    onlineLearning: null,
+  }
 }
 
 // ── 관련 메모리 조회 ──────────────────────────────────────
 
 export const getRelevantMemories = async (godId, topic, count = 3) => {
-  if (!IS_DEV) {
-    try {
-      const params = new URLSearchParams({ godId, topic, count: String(count) })
-      const data = await requestJson(`/api/memories/relevant?${params.toString()}`)
-      return data?.memories || []
-    } catch {
-      return []
-    }
+  try {
+    const params = new URLSearchParams({ godId, topic, count: String(count) })
+    const data = await requestJson(`/api/memories/relevant?${params.toString()}`)
+    return data?.memories || []
+  } catch {
+    if (!IS_DEV) return []
   }
 
   const { data, error } = await supabase

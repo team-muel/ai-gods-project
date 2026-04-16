@@ -294,6 +294,104 @@ CREATE INDEX IF NOT EXISTS idx_model_versions_rollout    ON public.model_version
 
 
 -- ============================================================
+-- 14.1 debate_dossiers — 보고서/PPT 생성용 구조화 Dossier
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.debate_dossiers (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  debate_id          uuid NOT NULL UNIQUE REFERENCES public.debates (id) ON DELETE CASCADE,
+  topic              text NOT NULL,
+  dossier_status     text NOT NULL DEFAULT 'needs_evidence',
+  executive_summary  text,
+  markdown_content   text,
+  structured_content jsonb NOT NULL DEFAULT '{}'::jsonb,
+  evidence_count     integer NOT NULL DEFAULT 0,
+  claim_count        integer NOT NULL DEFAULT 0,
+  action_item_count  integer NOT NULL DEFAULT 0,
+  metadata           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debate_dossiers_created_at ON public.debate_dossiers (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_debate_dossiers_status     ON public.debate_dossiers (dossier_status);
+
+CREATE TABLE IF NOT EXISTS public.debate_evidence (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  debate_id           uuid NOT NULL REFERENCES public.debates (id) ON DELETE CASCADE,
+  evidence_type       text NOT NULL,
+  source_kind         text NOT NULL,
+  provider            text,
+  source_url          text,
+  external_id         text,
+  title               text NOT NULL,
+  excerpt             text,
+  verification_status text NOT NULL DEFAULT 'unverified',
+  mention_count       integer NOT NULL DEFAULT 1,
+  mentioned_by        jsonb NOT NULL DEFAULT '[]'::jsonb,
+  metadata            jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debate_evidence_debate_id   ON public.debate_evidence (debate_id);
+CREATE INDEX IF NOT EXISTS idx_debate_evidence_source_kind ON public.debate_evidence (source_kind);
+CREATE INDEX IF NOT EXISTS idx_debate_evidence_created_at  ON public.debate_evidence (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.debate_claims (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  debate_id       uuid NOT NULL REFERENCES public.debates (id) ON DELETE CASCADE,
+  claim_key       text NOT NULL,
+  owner_god_id    text,
+  owner_god_name  text,
+  round           integer NOT NULL DEFAULT 1,
+  statement       text NOT NULL,
+  evidence_status text NOT NULL DEFAULT 'missing',
+  supporting_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  metadata        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_debate_claims_unique ON public.debate_claims (debate_id, claim_key);
+CREATE INDEX IF NOT EXISTS idx_debate_claims_debate_id     ON public.debate_claims (debate_id);
+CREATE INDEX IF NOT EXISTS idx_debate_claims_created_at    ON public.debate_claims (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.debate_artifacts (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  debate_id          uuid NOT NULL REFERENCES public.debates (id) ON DELETE CASCADE,
+  artifact_type      text NOT NULL,
+  title              text NOT NULL,
+  format             text NOT NULL DEFAULT 'markdown',
+  status             text NOT NULL DEFAULT 'ready',
+  content_markdown   text,
+  structured_content jsonb NOT NULL DEFAULT '{}'::jsonb,
+  metadata           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debate_artifacts_debate_id  ON public.debate_artifacts (debate_id);
+CREATE INDEX IF NOT EXISTS idx_debate_artifacts_type       ON public.debate_artifacts (artifact_type);
+CREATE INDEX IF NOT EXISTS idx_debate_artifacts_created_at ON public.debate_artifacts (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.autonomous_topic_candidates (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title              text NOT NULL,
+  rationale          text,
+  focus_area         text,
+  why_now            text,
+  novelty_score      integer NOT NULL DEFAULT 0,
+  urgency_score      integer NOT NULL DEFAULT 0,
+  evidence_hint      text,
+  recommended_output text,
+  status             text NOT NULL DEFAULT 'proposed',
+  source             text NOT NULL DEFAULT 'autonomous_topic_api',
+  metadata           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_autonomous_topic_candidates_created_at ON public.autonomous_topic_candidates (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_autonomous_topic_candidates_status     ON public.autonomous_topic_candidates (status);
+
+DROP TRIGGER IF EXISTS trg_debate_dossiers_updated_at ON public.debate_dossiers;
+CREATE TRIGGER trg_debate_dossiers_updated_at
+  BEFORE UPDATE ON public.debate_dossiers
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+
+-- ============================================================
 -- 15. storage buckets — 가상창고 원문/데이터셋 버킷
 -- ============================================================
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -404,6 +502,11 @@ ALTER TABLE public.arousal_logs    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.immune_logs     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reward_events   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.preference_pairs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.debate_dossiers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.debate_evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.debate_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.debate_artifacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.autonomous_topic_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.debate_archives ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dataset_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.training_runs ENABLE ROW LEVEL SECURITY;
@@ -415,7 +518,7 @@ DECLARE
   tbls text[] := ARRAY[
     'debates', 'debate_messages', 'god_memories',
     'memory_links', 'neuro_logs', 'arousal_logs', 'immune_logs',
-    'reward_events', 'preference_pairs', 'debate_archives',
+    'reward_events', 'preference_pairs', 'debate_dossiers', 'debate_evidence', 'debate_claims', 'debate_artifacts', 'autonomous_topic_candidates', 'debate_archives',
     'dataset_versions', 'training_runs', 'model_versions'
   ];
   tbl text;
@@ -447,6 +550,11 @@ REVOKE ALL ON TABLE public.arousal_logs    FROM anon, authenticated;
 REVOKE ALL ON TABLE public.immune_logs     FROM anon, authenticated;
 REVOKE ALL ON TABLE public.reward_events   FROM anon, authenticated;
 REVOKE ALL ON TABLE public.preference_pairs FROM anon, authenticated;
+REVOKE ALL ON TABLE public.debate_dossiers FROM anon, authenticated;
+REVOKE ALL ON TABLE public.debate_evidence FROM anon, authenticated;
+REVOKE ALL ON TABLE public.debate_claims FROM anon, authenticated;
+REVOKE ALL ON TABLE public.debate_artifacts FROM anon, authenticated;
+REVOKE ALL ON TABLE public.autonomous_topic_candidates FROM anon, authenticated;
 REVOKE ALL ON TABLE public.debate_archives FROM anon, authenticated;
 REVOKE ALL ON TABLE public.dataset_versions FROM anon, authenticated;
 REVOKE ALL ON TABLE public.training_runs FROM anon, authenticated;

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
 import { requestJson } from '../services/apiClient'
 
 // 파인튜닝 기준
 const THRESHOLD_MINIMUM = 50   // 학습 가능 (최소)
 const THRESHOLD_GOOD    = 100  // 학습 권장
 const THRESHOLD_GREAT   = 300  // 고품질 파인튜닝
-const IS_DEV = import.meta.env.DEV === true
 
 export const useDebateStats = () => {
   const [stats, setStats] = useState({
@@ -20,28 +18,9 @@ export const useDebateStats = () => {
 
   const fetchStats = useCallback(async () => {
     try {
-      let total = 0
-      let today = 0
-
-      if (IS_DEV) {
-        const { count: totalCount } = await supabase
-          .from('debates')
-          .select('*', { count: 'exact', head: true })
-
-        const todayStart = new Date()
-        todayStart.setHours(0, 0, 0, 0)
-        const { count: todayCount } = await supabase
-          .from('debates')
-          .select('*', { count: 'exact', head: true })
-          .gte('created_at', todayStart.toISOString())
-
-        total = totalCount || 0
-        today = todayCount || 0
-      } else {
-        const data = await requestJson('/api/debates/stats')
-        total = data?.totalDebates || 0
-        today = data?.todayDebates || 0
-      }
+      const data = await requestJson('/api/debates/stats')
+      const total = data?.totalDebates || 0
+      const today = data?.todayDebates || 0
 
       let readiness
       let progressPct

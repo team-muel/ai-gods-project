@@ -61,6 +61,45 @@ const getRequestTimeoutMs = () => {
   return parsed
 }
 
+const getOptionalPositiveInt = (envKey) => {
+  const parsed = Number.parseInt(process.env[envKey] || '', 10)
+  if (Number.isNaN(parsed) || parsed <= 0) return 0
+  return parsed
+}
+
+const trimPromptContent = (value, limit) => {
+  const text = String(value || '')
+  if (!limit || text.length <= limit) return text
+  if (limit < 80) return text.slice(0, limit)
+
+  const separator = '\n\n[...]\n\n'
+  const headLength = Math.max(24, Math.floor(limit * 0.6))
+  const tailLength = Math.max(16, limit - headLength - separator.length)
+  return `${text.slice(0, headLength)}${separator}${text.slice(-tailLength)}`
+}
+
+const prepareCustomPayload = (payload) => {
+  const maxTokensCap = getOptionalPositiveInt('CUSTOM_MODEL_MAX_TOKENS')
+  const systemPromptChars = getOptionalPositiveInt('CUSTOM_MODEL_SYSTEM_PROMPT_CHARS')
+  const userPromptChars = getOptionalPositiveInt('CUSTOM_MODEL_USER_PROMPT_CHARS')
+
+  return {
+    ...payload,
+    max_tokens: maxTokensCap ? Math.min(Number(payload?.max_tokens) || maxTokensCap, maxTokensCap) : payload.max_tokens,
+    messages: Array.isArray(payload?.messages)
+      ? payload.messages.map((message) => {
+          const limit = message?.role === 'system' ? systemPromptChars : userPromptChars
+          if (!limit) return message
+
+          return {
+            ...message,
+            content: trimPromptContent(message?.content, limit),
+          }
+        })
+      : [],
+  }
+}
+
 const getAgentProviderOverride = (agentId) => {
   const normalized = normalizeKey(agentId)
   const value = String(process.env[`CHAT_PROVIDER_${normalized}`] || '').trim().toLowerCase()
@@ -331,6 +370,7 @@ export const callCustomProvider = async (payload, modelVersion) => {
     }
   }
 
+  const preparedPayload = prepareCustomPayload(payload)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), getRequestTimeoutMs())
 
@@ -338,7 +378,7 @@ export const callCustomProvider = async (payload, modelVersion) => {
     const response = await fetch(url, {
       method: 'POST',
       headers: getCustomHeaders(),
-      body: JSON.stringify(buildCustomRequestBody({ payload, modelVersion })),
+      body: JSON.stringify(buildCustomRequestBody({ payload: preparedPayload, modelVersion })),
       signal: controller.signal,
     })
     const body = await readJsonResponse(response)

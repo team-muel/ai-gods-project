@@ -73,6 +73,41 @@ BEGIN
 		EXECUTE 'REVOKE ALL ON TABLE public.preference_pairs FROM anon, authenticated';
 	END IF;
 
+	IF to_regclass('public.debate_dossiers') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_dossiers';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_dossiers';
+		EXECUTE 'ALTER TABLE public.debate_dossiers ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debate_dossiers FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.debate_evidence') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_evidence';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_evidence';
+		EXECUTE 'ALTER TABLE public.debate_evidence ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debate_evidence FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.debate_claims') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_claims';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_claims';
+		EXECUTE 'ALTER TABLE public.debate_claims ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debate_claims FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.debate_artifacts') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_artifacts';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_artifacts';
+		EXECUTE 'ALTER TABLE public.debate_artifacts ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.debate_artifacts FROM anon, authenticated';
+	END IF;
+
+	IF to_regclass('public.autonomous_topic_candidates') IS NOT NULL THEN
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.autonomous_topic_candidates';
+		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.autonomous_topic_candidates';
+		EXECUTE 'ALTER TABLE public.autonomous_topic_candidates ENABLE ROW LEVEL SECURITY';
+		EXECUTE 'REVOKE ALL ON TABLE public.autonomous_topic_candidates FROM anon, authenticated';
+	END IF;
+
 	IF to_regclass('public.debate_archives') IS NOT NULL THEN
 		EXECUTE 'DROP POLICY IF EXISTS allow_all_anon ON public.debate_archives';
 		EXECUTE 'DROP POLICY IF EXISTS allow_all_authenticated ON public.debate_archives';

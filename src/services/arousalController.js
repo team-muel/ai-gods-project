@@ -2,10 +2,7 @@
 // Controls per-agent "heart rate" (HR) which modulates response length and pacing.
 // Higher HR -> burst mode (shorter, faster replies). Lower HR -> deep analysis (longer replies).
 
-import { supabase } from '../lib/supabase.js'
 import { postJson } from './apiClient.js'
-
-const IS_DEV = import.meta.env.DEV === true
 
 const DEFAULT = {
   HR: 1.0, // baseline heart rate (1.0 = normal)
@@ -83,19 +80,6 @@ export function updateFromUrgency(agentId, urgency = 0) {
         burst: state.burst,
         tokenFactor: getArousalParams(agentId).tokenFactor,
         suggestedDelayMs: getArousalParams(agentId).suggestedDelayMs,
-      }
-
-      if (IS_DEV) {
-        const res = await supabase.from('arousal_logs').insert({
-          agent_id: agentId,
-          heart_rate: state.HR,
-          burst: state.burst,
-          token_factor: payload.tokenFactor,
-          suggested_delay_ms: payload.suggestedDelayMs,
-          created_at: new Date().toISOString(),
-        })
-        if (res.error) console.info('arousalController: supabase insert error', res.error)
-        return
       }
 
       await postJson('/api/logs/arousal', payload)

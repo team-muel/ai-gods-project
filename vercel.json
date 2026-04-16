@@ -3,7 +3,14 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "crons": [
+    { "path": "/api/topics/autonomous?count=6", "schedule": "0 9 * * *" }
+  ],
   "rewrites": [
+    { "source": "/api/artifacts/(generate|export|feedback)", "destination": "/api/artifacts?route=$1" },
+    { "source": "/api/debates/(complete|feedback|stats)", "destination": "/api/debates?route=$1" },
+    { "source": "/api/logs/(neuro|immune|arousal)", "destination": "/api/logs?route=$1" },
+    { "source": "/api/google/oauth/(start|callback|status|disconnect)", "destination": "/api/google/oauth?route=$1" },
     { "source": "/api/obsidian/search", "destination": "/api/obsidian" },
     { "source": "/api/obsidian/write", "destination": "/api/obsidian" },
     { "source": "/api/(.*)", "destination": "/api/$1" },

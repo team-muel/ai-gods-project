@@ -19,21 +19,35 @@
 ## 서버 구성
 
 1. `supabase`
-- 읽기 전용
-- project scope 고정
-- `database,docs,debugging,development` 기능만 활성화
-
-2. `supabaseWrite`
 - 쓰기 가능
 - project scope 고정
-- `database,docs,debugging,development,functions` 기능 활성화
+- VS Code 내장 Supabase MCP 툴이 이 서버 이름에 연결되므로 migration/DDL 작업용 기본 서버로 사용한다.
+
+2. `supabaseReadOnly`
+- 읽기 전용
+- project scope 고정
+- 수동 점검, 안전 조회, 문서/스키마 확인에 사용한다.
+
+3. `supabaseWrite`
+- 쓰기 가능
+- project scope 고정
+- 명시적으로 write-capable 서버를 고를 때 사용하는 별칭이다.
 
 ## 권장 사용 순서
 
-1. VS Code 또는 Copilot Chat이 MCP 설정을 다시 읽도록 새로고침한다.
-2. Supabase 로그인 승인 창이 뜨면 인증한다.
-3. 먼저 읽기 전용 프롬프트를 실행해 연결과 프로젝트 범위를 확인한다.
-4. 그 다음에만 쓰기 작업 프롬프트를 사용한다.
+1. Supabase Dashboard > Account > Access Tokens 에서 MCP용 PAT를 생성한다.
+2. 운영 PC의 사용자 환경변수 `SUPABASE_ACCESS_TOKEN` 에 PAT를 저장한다.
+3. VS Code를 완전히 재시작해 MCP 프로세스가 새 환경변수를 읽게 한다.
+4. 먼저 읽기 전용 서버 `supabaseReadOnly` 로 연결과 프로젝트 범위를 확인한다.
+5. 그 다음에만 `supabase` 또는 `supabaseWrite` 로 쓰기 작업을 수행한다.
+
+## 인증 메모
+
+- 현재 워크스페이스 설정은 브라우저 OAuth 대신 HTTP Authorization 헤더 기반 PAT 인증을 사용한다.
+- 이유: 기존 동적 OAuth 흐름에서 Supabase MCP가 반복적으로 401 Unauthorized 상태가 났기 때문이다.
+- 토큰은 사용자 환경변수 `SUPABASE_ACCESS_TOKEN` 에서 읽으며 `mcp.json` 파일에 직접 기록되지 않는다.
+- 토큰을 바꾸고 싶으면 사용자 환경변수를 갱신한 뒤 VS Code를 재시작하면 된다.
+- VS Code 내장 Supabase MCP 관리 툴은 `supabase` 서버 이름을 기본 대상으로 사용하므로, 이 서버는 read-only가 아니라 write-capable로 유지해야 한다.
 
 ## 추천 프롬프트
 

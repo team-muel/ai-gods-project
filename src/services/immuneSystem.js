@@ -2,12 +2,9 @@
 // Heuristic-based initial implementation: compares new messages to existing memories/notes
 // and marks low-similarity or contradictory messages as antigens.
 
-import { supabase } from '../lib/supabase.js'
 import { getRelevantMemories, memoriesToContext } from './memoryService.js'
 import { postJson } from './apiClient.js'
 import { readFromObsidian } from './obsidianService.js'
-
-const IS_DEV = import.meta.env.DEV === true
 
 const DEFAULT = {
   similarityThreshold: 0.18, // jaccard similarity below this => suspect
@@ -114,20 +111,6 @@ export async function scanAndQuarantine(agentId, messages = [], opts = {}) {
       // try to persist to Supabase (best-effort, non-blocking)
       ;(async () => {
         try {
-          if (IS_DEV) {
-            const res = await supabase.from('immune_logs').insert({
-              agent_id: entry.agent_id,
-              source: entry.source,
-              content: entry.content,
-              reason: entry.reason,
-              similarity: entry.similarity,
-              status: entry.status,
-              created_at: entry.created_at,
-            })
-            if (res.error) console.info('immuneSystem: supabase insert error', res.error)
-            return
-          }
-
           await postJson('/api/logs/immune', {
             agentId: entry.agent_id,
             source: entry.source,

@@ -316,11 +316,24 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial', options = {
   const agent = getAgentConfigById(agentId)
   if (!agent) throw new Error(`Unknown agentId: ${agentId}`)
 
-  const compact = options?.compact === true
+  const promptProfile = String(
+    options?.profile || (options?.compact === true ? 'compact' : 'full')
+  ).trim().toLowerCase()
+  const compact = promptProfile === 'compact'
+  const minimal = promptProfile === 'minimal'
 
   if (agentId === JUDGE_AGENT_ID) {
     const phaseConfig = JUDGE_PHASES[phase] || JUDGE_PHASES['judge-final']
     if (phase === 'judge-consensus') {
+      if (minimal) {
+        return buildLines([
+          agent.systemPrompt,
+          `현재 단계: ${phaseConfig.stageName}`,
+          '오직 "예" 또는 "아니오"만 답하세요.',
+          '반드시 한국어로 답변하세요.',
+        ])
+      }
+
       if (compact) {
         return buildLines([
           agent.systemPrompt,
@@ -340,6 +353,17 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial', options = {
         ...phaseConfig.rules,
         '판정 시 확인할 항목:',
         ...buildNumberedLines(agent.runtime.consensusChecklist),
+        '반드시 한국어로 답변하세요.',
+      ])
+    }
+
+    if (minimal) {
+      return buildLines([
+        agent.systemPrompt,
+        `핵심 렌즈: ${agent.runtime.lens}`,
+        `현재 단계: ${phaseConfig.stageName}`,
+        '소제목은 핵심 합의점 / 주요 이견 / 다음 행동 순서만 유지하세요.',
+        '새 주장을 만들지 말고 기존 발언만 짧게 정리하세요.',
         '반드시 한국어로 답변하세요.',
       ])
     }
@@ -375,6 +399,19 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial', options = {
   const sectionKey = phase === 'debate' ? 'debateSections' : 'initialSections'
   const checklistKey = phase === 'debate' ? 'debateChecklist' : 'initialChecklist'
 
+  if (minimal) {
+    return buildLines([
+      agent.systemPrompt,
+      `핵심 렌즈: ${agent.runtime.lens}`,
+      `현재 단계: ${phaseConfig.stageName}`,
+      phase === 'debate'
+        ? '다른 임원을 최소 1명 실명으로 언급하고 판단과 제안을 짧게 제시하세요.'
+        : '핵심 주장, 실행 포인트, 리스크를 짧게 제시하세요.',
+      '제공된 발췌와 URL 밖의 인용문이나 사실은 만들어내지 마세요.',
+      '반드시 한국어로 답변하세요.',
+    ])
+  }
+
   if (compact) {
     return buildLines([
       agent.systemPrompt,
@@ -386,6 +423,7 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial', options = {
         : '핵심 주장과 실행 포인트를 먼저 제시하세요.',
       `반드시 포함할 관점: ${agent.runtime[checklistKey].join(' / ')}`,
       `권장 소제목 순서: ${agent.runtime[sectionKey].join(' / ')}`,
+      '제공된 발췌와 URL 밖의 인용문이나 사실은 만들어내지 마세요.',
       '반드시 한국어로 답변하세요.',
     ])
   }
@@ -401,6 +439,7 @@ export const buildCouncilSystemPrompt = (agentId, phase = 'initial', options = {
     ...buildNumberedLines(agent.runtime[checklistKey]),
     '답변 소제목 순서:',
     ...buildBullets(agent.runtime[sectionKey]),
+    '제공된 발췌와 URL 밖의 인용문이나 사실은 만들어내지 마세요.',
     '반드시 한국어로 답변하세요.',
   ])
 }

@@ -6,10 +6,15 @@ import path from 'path'
 import chokidar from 'chokidar'
 import matter from 'gray-matter'
 import { createClient } from '@supabase/supabase-js'
+import artifactsHandler from './api/artifacts/index.js'
 import chatHandler from './api/chat.js'
-import debatesCompleteHandler from './api/debates/complete.js'
+import debatesHandler from './api/debates/index.js'
+import googleOAuthHandler from './api/google/oauth/index.js'
+import logsHandler from './api/logs/index.js'
 import memoriesRelevantHandler from './api/memories/relevant.js'
 import { buildOperationsDashboard, DEFAULT_DASHBOARD_PAGE_SIZE } from './api/ops/_operationsDashboard.js'
+import searchHandler from './api/search.js'
+import autonomousTopicsHandler from './api/topics/autonomous.js'
 
 // ── Obsidian 유틸 ───────────────────────────────────────────
 const slugify = (text) =>
@@ -27,6 +32,68 @@ const attachQueryParams = (req) => {
   const urlObj = new URL(req.url || '/', 'http://localhost')
   req.query = Object.fromEntries(urlObj.searchParams.entries())
   return urlObj
+}
+
+const readRequestBody = (req) => new Promise((resolve, reject) => {
+  let body = ''
+  req.on('data', (chunk) => {
+    body += chunk
+  })
+  req.on('end', () => resolve(body))
+  req.on('error', reject)
+})
+
+const sendMiddlewareError = (res, statusCode, message) => {
+  res.statusCode = statusCode
+  res.setHeader('Content-Type', 'application/json')
+  res.end(JSON.stringify({ error: message }))
+}
+
+const handleApiRequest = (req, res, handler, fallbackMessage) => {
+  const method = String(req.method || 'GET').trim().toUpperCase()
+
+  const runHandler = async (body = '') => {
+    try {
+      req.body = body
+      await handler(req, res)
+    } catch (error) {
+      sendMiddlewareError(res, 500, error?.message || fallbackMessage)
+    }
+  }
+
+  if (method === 'POST') {
+    readRequestBody(req)
+      .then(runHandler)
+      .catch((error) => {
+        sendMiddlewareError(res, 500, error?.message || fallbackMessage)
+      })
+    return
+  }
+
+  Promise.resolve(runHandler('')).catch((error) => {
+    sendMiddlewareError(res, 500, error?.message || fallbackMessage)
+  })
+}
+
+const handleJsonPost = (req, res, handler, fallbackMessage) => {
+  if (req.method !== 'POST') {
+    res.statusCode = 405
+    res.end()
+    return
+  }
+
+  readRequestBody(req)
+    .then(async (body) => {
+      try {
+        req.body = body
+        await handler(req, res)
+      } catch (error) {
+        sendMiddlewareError(res, 500, error?.message || fallbackMessage)
+      }
+    })
+    .catch((error) => {
+      sendMiddlewareError(res, 500, error?.message || fallbackMessage)
+    })
 }
 
 // Obsidian .md 파일 생성
@@ -139,6 +206,13 @@ const startObsidianWatcher = (vaultPath, supabaseClient) => {
 // ── Vite Config ─────────────────────────────────────────────
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+
+  // Make .env values visible to server-side API handlers used by Vite dev middleware.
+  for (const [key, value] of Object.entries(env)) {
+    if (process.env[key] == null || process.env[key] === '') {
+      process.env[key] = value
+    }
+  }
 
   const vaultPath   = env.OBSIDIAN_VAULT_PATH || ''
   const supabaseUrl = env.SUPABASE_URL || env.VITE_SUPABASE_URL
@@ -255,21 +329,76 @@ export default defineConfig(({ mode }) => {
       {
         name: 'debates-complete-api',
         configureServer(server) {
-          server.middlewares.use('/api/debates/complete', (req, res) => {
-            if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
-            let body = ''
-            req.on('data', chunk => (body += chunk))
-            req.on('end', async () => {
-              try {
-                attachQueryParams(req)
-                req.body = body
-                await debatesCompleteHandler(req, res)
-              } catch (e) {
-                res.statusCode = 500
-                res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: e?.message || '토론 저장 실패' }))
-              }
+          server.middlewares.use('/api/debates', (req, res) => {
+            attachQueryParams(req)
+            handleApiRequest(req, res, debatesHandler, '토론 API 실패')
+          })
+        },
+      },
+
+      {
+        name: 'debates-stats-api',
+        configureServer(server) {
+          server.middlewares.use('/api/debates/stats', (_req, _res, next) => next())
+        },
+      },
+
+      {
+        name: 'logs-api',
+        configureServer(server) {
+          server.middlewares.use('/api/logs', (req, res) => {
+            handleApiRequest(req, res, logsHandler, '로그 API 실패')
+          })
+        },
+      },
+
+      {
+        name: 'artifacts-api',
+        configureServer(server) {
+          server.middlewares.use('/api/artifacts', (req, res) => {
+            handleApiRequest(req, res, artifactsHandler, '산출물 API 실패')
+          })
+        },
+      },
+
+      {
+        name: 'autonomous-topics-api',
+        configureServer(server) {
+          server.middlewares.use('/api/topics/autonomous', (req, res) => {
+            if (req.method === 'POST') {
+              readRequestBody(req)
+                .then(async (body) => {
+                  try {
+                    req.body = body
+                    await autonomousTopicsHandler(req, res)
+                  } catch (e) {
+                    res.statusCode = 500
+                    res.setHeader('Content-Type', 'application/json')
+                    res.end(JSON.stringify({ error: e?.message || '자율 주제 생성 실패' }))
+                  }
+                })
+                .catch((e) => {
+                  res.statusCode = 500
+                  res.setHeader('Content-Type', 'application/json')
+                  res.end(JSON.stringify({ error: e?.message || '자율 주제 생성 실패' }))
+                })
+              return
+            }
+
+            autonomousTopicsHandler(req, res).catch((e) => {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: e?.message || '자율 주제 생성 실패' }))
             })
+          })
+        },
+      },
+
+      {
+        name: 'google-oauth-api',
+        configureServer(server) {
+          server.middlewares.use('/api/google/oauth', (req, res) => {
+            handleApiRequest(req, res, googleOAuthHandler, 'Google OAuth API 실패')
           })
         },
       },
@@ -279,47 +408,13 @@ export default defineConfig(({ mode }) => {
         name: 'search-crawl',
         configureServer(server) {
           server.middlewares.use('/api/search', async (req, res) => {
-            const urlObj = new URL(req.url, 'http://localhost')
-            const query  = urlObj.searchParams.get('q')
-            const num    = parseInt(urlObj.searchParams.get('num') || '5')
-
-            if (!query) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ error: 'q 파라미터가 필요합니다.' }))
-              return
-            }
-
             try {
-              const response = await fetch(
-                `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=kr-kr`,
-                {
-                  headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-                    'Accept-Language': 'ko-KR,ko;q=0.9',
-                    'Accept': 'text/html',
-                  },
-                }
-              )
-
-              const html = await response.text()
-              const titleMatches   = [...html.matchAll(/class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>/g)]
-              const snippetMatches = [...html.matchAll(/class="result__snippet"[^>]*>([^<]+)<\/a>/g)]
-
-              const count = Math.min(num, titleMatches.length)
-              const results = []
-              for (let i = 0; i < count; i++) {
-                const title   = titleMatches[i]?.[2]?.trim() || ''
-                const link    = titleMatches[i]?.[1]?.trim() || ''
-                const snippet = snippetMatches[i]?.[1]?.trim() || ''
-                if (title) results.push({ title, snippet, link })
-              }
-
-              res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ results, knowledgePanel: null, query }))
+              attachQueryParams(req)
+              await searchHandler(req, res)
             } catch (e) {
-              console.error('[Search] 크롤링 실패:', e.message)
+              res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ results: [], knowledgePanel: null, query }))
+              res.end(JSON.stringify({ error: e?.message || '검색 실패' }))
             }
           })
         },

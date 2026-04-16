@@ -1,10 +1,7 @@
 // Simple neuromodulator: dopamine (reward/creativity) and cortisol (stress/defensiveness)
 // Provides per-agent state, event updates, and sampling parameter mapping.
 
-import { supabase } from '../lib/supabase.js'
 import { postJson } from './apiClient.js'
-
-const IS_DEV = import.meta.env.DEV === true
 
 const DEFAULTS = {
   D: 0.2, // dopamine baseline
@@ -79,20 +76,6 @@ export function updateStateFromEvent(agentId, { posFeedback = 0, negFeedback = 0
   ;(async () => {
     try {
       const sampling = getSamplingParams(agentId)
-      if (IS_DEV) {
-        const res = await supabase.from('neuro_logs').insert({
-          agent_id: agentId,
-          dopamine: state.D,
-          cortisol: state.C,
-          temperature: sampling.temperature,
-          top_p: sampling.top_p,
-          max_tokens: sampling.max_tokens,
-          created_at: new Date().toISOString(),
-        })
-        if (res.error) console.info('neuroModulator: supabase insert error', res.error)
-        return
-      }
-
       await postJson('/api/logs/neuro', {
         agentId,
         dopamine: state.D,

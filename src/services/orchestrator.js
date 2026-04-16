@@ -1,14 +1,20 @@
 import { callAI, callAIDebate, checkConsensus, generateFinalConsensus, angelSummarize } from './aiService';
 import { AI_GODS, AI_JUDGE } from '../config/aiGods';
+import { mergeEvidenceItems } from '../lib/debateEvidence.js';
 import { saveCompletedDebate } from './memoryService';
 import { syncDebateToObsidian } from './obsidianService';
 
 const IS_DEV = import.meta.env.DEV;
+const readDelayFromEnv = () => {
+  const fallback = IS_DEV ? 1000 : 1000;
+  const parsed = Number.parseInt(import.meta.env.VITE_ORCHESTRATOR_CALL_DELAY_MS || String(fallback), 10);
+  return Number.isNaN(parsed) ? fallback : Math.max(0, parsed);
+}
 
 // 로컬 직접 서빙: 최대 4라운드 / 원격 운영: 비용과 지연을 고려해 2라운드
 export const MAX_ROUNDS = IS_DEV ? 4 : 2;
 export const MIN_ROUNDS = IS_DEV ? 2 : 1;
-const CALL_DELAY = IS_DEV ? 0 : Math.max(0, Number.parseInt(import.meta.env.VITE_ORCHESTRATOR_CALL_DELAY_MS || '1000', 10) || 1000); // 원격 운영 환경만 딜레이 적용
+const CALL_DELAY = readDelayFromEnv();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -33,6 +39,7 @@ export class DiscussionOrchestrator {
   async startDiscussion(topic, transcript = null) {
     this.topic = topic;
     this.messages = [];
+    let debateEvidence = [];
 
     // ── Round 1: 초기 의견 발표 ──────────────────────────
     this._status('🌌 Round 1 · 초기 의견 수집 중...');
@@ -41,8 +48,18 @@ export class DiscussionOrchestrator {
       this._status(`${god.symbol} ${god.name} 의견 작성 중...`);
       try {
         const result = await callAI(god.id, topic, transcript);
-        const msg = { round: 1, godId: god.id, god: god.name, emoji: god.symbol, content: result.response, timestamp: result.timestamp };
+        const msg = {
+          round: 1,
+          godId: god.id,
+          god: god.name,
+          emoji: god.symbol,
+          content: result.response,
+          timestamp: result.timestamp,
+          citationRefs: result.citationRefs || [],
+          promptEvidence: result.promptEvidence || [],
+        };
         this.messages.push(msg);
+        debateEvidence = mergeEvidenceItems([...debateEvidence, ...(result.evidence || [])]);
         if (this.onMessageCallback) this.onMessageCallback(msg);
       } catch (err) {
         console.error(`❌ ${god.name} Round 1:`, err);
@@ -64,36 +81,19 @@ export class DiscussionOrchestrator {
       const prevMsgs = this.messages.filter(m => m.round === round - 1 && !m.type);
       angelSummaries = {};
 
-      if (IS_DEV) {
-        // Ollama: 병렬 처리
-        await Promise.all(prevMsgs.map(async (msg) => {
-          try {
-            const summary = await angelSummarize(msg.godId, msg.god, msg.content);
-            angelSummaries[msg.godId] = summary;
-            const angelMsg = { round: round - 1, godId: msg.godId, god: msg.god, emoji: '👼', type: 'angel', content: summary, timestamp: new Date().toISOString() };
-            this.messages.push(angelMsg);
-            if (this.onMessageCallback) this.onMessageCallback(angelMsg);
-          } catch (e) {
-            console.warn(`[Angel] ${msg.god} 요약 실패:`, e.message);
-            angelSummaries[msg.godId] = msg.content.slice(0, 200);
-          }
-        }));
-      } else {
-        // Groq: 순차 처리 (rate limit 방지)
-        for (const msg of prevMsgs) {
-          this._status(`👼 ${msg.god}의 천사가 요약 중...`);
-          try {
-            const summary = await angelSummarize(msg.godId, msg.god, msg.content);
-            angelSummaries[msg.godId] = summary;
-            const angelMsg = { round: round - 1, godId: msg.godId, god: msg.god, emoji: '👼', type: 'angel', content: summary, timestamp: new Date().toISOString() };
-            this.messages.push(angelMsg);
-            if (this.onMessageCallback) this.onMessageCallback(angelMsg);
-          } catch (e) {
-            console.warn(`[Angel] ${msg.god} 요약 실패:`, e.message);
-            angelSummaries[msg.godId] = msg.content.slice(0, 200);
-          }
-          await sleep(CALL_DELAY);
+      for (const msg of prevMsgs) {
+        this._status(`👼 ${msg.god}의 천사가 요약 중...`);
+        try {
+          const summary = await angelSummarize(msg.godId, msg.god, msg.content);
+          angelSummaries[msg.godId] = summary;
+          const angelMsg = { round: round - 1, godId: msg.godId, god: msg.god, emoji: '👼', type: 'angel', content: summary, timestamp: new Date().toISOString() };
+          this.messages.push(angelMsg);
+          if (this.onMessageCallback) this.onMessageCallback(angelMsg);
+        } catch (e) {
+          console.warn(`[Angel] ${msg.god} 요약 실패:`, e.message);
+          angelSummaries[msg.godId] = msg.content.slice(0, 200);
         }
+        await sleep(CALL_DELAY);
       }
 
       this._status(`🔥 Round ${round} · 토론 진행 중...`);
@@ -105,9 +105,19 @@ export class DiscussionOrchestrator {
           .filter(m => m.godId !== god.id)
           .map(m => ({ god: m.god, content: angelSummaries[m.godId] || m.content }));
         try {
-          const result = await callAIDebate(god.id, topic, otherOpinions);
-          const msg = { round, godId: god.id, god: god.name, emoji: god.symbol, content: result.response, timestamp: result.timestamp };
+          const result = await callAIDebate(god.id, topic, otherOpinions, { evidence: debateEvidence });
+          const msg = {
+            round,
+            godId: god.id,
+            god: god.name,
+            emoji: god.symbol,
+            content: result.response,
+            timestamp: result.timestamp,
+            citationRefs: result.citationRefs || [],
+            promptEvidence: result.promptEvidence || [],
+          };
           this.messages.push(msg);
+          debateEvidence = mergeEvidenceItems([...debateEvidence, ...(result.evidence || [])]);
           if (this.onMessageCallback) this.onMessageCallback(msg);
         } catch (err) {
           console.error(`❌ ${god.name} Round ${round}:`, err);
@@ -149,13 +159,17 @@ export class DiscussionOrchestrator {
 
     // ── Supabase에 전체 토론 저장 ─────────────────────────
     this._status('🧠 Supabase에 저장 중...');
-    const debateId = await saveCompletedDebate({
+    const persistence = await saveCompletedDebate({
       topic,
       isYoutube: !!transcript,
       totalRounds,
       consensus,
       messages: spokenMessages,
+      evidence: debateEvidence,
     });
+    const debateId = persistence?.debateId || null;
+    const dossier = persistence?.dossier || null;
+    const artifacts = persistence?.artifacts || null;
 
     // ── Obsidian에 노트 동기화 ────────────────────────────────
     this._status('📓 Obsidian에 기억 동기화 중...');
@@ -169,10 +183,10 @@ export class DiscussionOrchestrator {
 
     this._status('🎉 토론 완료!');
     if (this.onCompleteCallback) {
-      this.onCompleteCallback({ topic, debateId, messages: this.messages, consensus, totalRounds });
+      this.onCompleteCallback({ topic, debateId, dossier, artifacts, messages: this.messages, consensus, totalRounds });
     }
 
-    return { topic, debateId, messages: this.messages, consensus, totalRounds };
+    return { topic, debateId, dossier, artifacts, messages: this.messages, consensus, totalRounds };
   }
 }
 

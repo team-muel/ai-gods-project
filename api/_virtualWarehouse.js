@@ -352,6 +352,8 @@ export const buildDebateArchivePayload = ({
   messages,
   rewardEvents = [],
   preferencePairs = [],
+  dossier = null,
+  artifacts = null,
   source = 'system',
   archivedAt = new Date().toISOString(),
 }) => {
@@ -366,7 +368,7 @@ export const buildDebateArchivePayload = ({
   }
 
   return {
-    schema_version: 1,
+    schema_version: dossier ? 2 : 1,
     archived_at: archivedAt,
     source,
     debate: {
@@ -386,6 +388,8 @@ export const buildDebateArchivePayload = ({
       consensus: String(debateRow?.consensus || '').slice(0, 400),
       created_at: fallbackCreatedAt,
     })),
+    dossier: dossier || null,
+    artifacts: artifacts || null,
     reward_events: (rewardEvents || []).map(normalizeRewardEvent),
     preference_pairs: (preferencePairs || []).map(normalizePreferencePair),
   }
@@ -400,6 +404,8 @@ export const normalizeArchivedDebate = (document) => {
     total_rounds: Math.max(1, Number(debate.total_rounds || document?.total_rounds) || 1),
     consensus: String(debate.consensus || document?.consensus || ''),
     created_at: String(debate.created_at || document?.created_at || document?.archived_at || '').trim(),
+    dossier: document?.dossier || null,
+    artifacts: document?.artifacts || null,
     messages: (document?.messages || []).map((message) => normalizeDebateMessage(message, debate.created_at || document?.created_at || '')),
     reward_events: (document?.reward_events || document?.rewardEvents || []).map(normalizeRewardEvent),
     preference_pairs: (document?.preference_pairs || document?.preferencePairs || []).map(normalizePreferencePair),
@@ -412,6 +418,8 @@ export const persistDebateArchive = async ({
   messages,
   rewardEvents = [],
   preferencePairs = [],
+  dossier = null,
+  artifacts = null,
   source = 'system',
 }) => {
   const config = getVirtualWarehouseConfig()
@@ -420,6 +428,8 @@ export const persistDebateArchive = async ({
     messages,
     rewardEvents,
     preferencePairs,
+    dossier,
+    artifacts,
     source,
   })
 
@@ -464,6 +474,11 @@ export const persistDebateArchive = async ({
         created_at: payload.debate.created_at,
         total_rounds: payload.debate.total_rounds,
         is_youtube: payload.debate.is_youtube,
+        dossier_status: payload.dossier?.status || null,
+        evidence_count: Number(payload.dossier?.metrics?.evidenceCount || 0),
+        claim_count: Number(payload.dossier?.metrics?.claimCount || 0),
+        action_item_count: Number(payload.dossier?.metrics?.actionItemCount || 0),
+        artifact_count: Object.values(payload.artifacts || {}).filter(Boolean).length,
         god_stats: buildGodArchiveStats(payload.messages),
       },
     }, { onConflict: 'debate_id' })

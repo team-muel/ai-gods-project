@@ -63,7 +63,7 @@ const dispatchWorkflow = async ({ owner, repo, workflowFile, ref, token, inputs 
   })
 }
 
-export const maybeTriggerOnlineLearning = async ({ debateId, topic, totalRounds, consensus, messages, rewardEvents, preferencePairs } = {}) => {
+export const maybeTriggerOnlineLearning = async ({ debateId, topic, totalRounds, consensus, messages, rewardEvents, preferencePairs, artifactFeedbackEvents } = {}) => {
   const enabled = truthy(resolveEnv('ONLINE_LEARNING_ENABLED'), false)
   if (!enabled) {
     return { triggered: false, reason: 'disabled' }
@@ -76,23 +76,33 @@ export const maybeTriggerOnlineLearning = async ({ debateId, topic, totalRounds,
 
   const minRewardEvents = parsePositiveInt(resolveEnv('ONLINE_LEARNING_MIN_REWARD_EVENTS'), 4)
   const minPreferencePairs = parsePositiveInt(resolveEnv('ONLINE_LEARNING_MIN_PREFERENCE_PAIRS'), 4)
+  const minArtifactFeedbackEvents = parsePositiveInt(resolveEnv('ONLINE_LEARNING_MIN_ARTIFACT_FEEDBACK_EVENTS'), 3)
   const minConsensusChars = parsePositiveInt(resolveEnv('ONLINE_LEARNING_MIN_CONSENSUS_CHARS'), 80)
   const cooldownMinutes = parsePositiveInt(resolveEnv('ONLINE_LEARNING_COOLDOWN_MINUTES'), 60)
   const requireConsensus = truthy(resolveEnv('ONLINE_LEARNING_REQUIRE_CONSENSUS'), true)
   const rewardEventCount = Array.isArray(rewardEvents) ? rewardEvents.length : 0
   const preferencePairCount = Array.isArray(preferencePairs) ? preferencePairs.length : 0
+  const artifactFeedbackCount = Array.isArray(artifactFeedbackEvents) ? artifactFeedbackEvents.length : 0
   const consensusChars = String(consensus || '').trim().length
+  const debateReady = rewardEventCount >= minRewardEvents
+    && preferencePairCount >= minPreferencePairs
+    && (!requireConsensus || consensusChars >= minConsensusChars)
+  const artifactReady = artifactFeedbackCount >= minArtifactFeedbackEvents
 
-  if (rewardEventCount < minRewardEvents) {
+  if (!debateReady && !artifactReady && rewardEventCount < minRewardEvents) {
     return { triggered: false, reason: 'insufficient_reward_events', rewardEventCount, minRewardEvents }
   }
 
-  if (preferencePairCount < minPreferencePairs) {
+  if (!debateReady && !artifactReady && preferencePairCount < minPreferencePairs) {
     return { triggered: false, reason: 'insufficient_preference_pairs', preferencePairCount, minPreferencePairs }
   }
 
-  if (requireConsensus && consensusChars < minConsensusChars) {
+  if (!debateReady && !artifactReady && requireConsensus && consensusChars < minConsensusChars) {
     return { triggered: false, reason: 'consensus_too_short', consensusChars, minConsensusChars }
+  }
+
+  if (!debateReady && !artifactReady) {
+    return { triggered: false, reason: 'insufficient_artifact_feedback', artifactFeedbackCount, minArtifactFeedbackEvents }
   }
 
   const token = resolveEnv('GITHUB_TOKEN', 'GH_TOKEN')
@@ -150,6 +160,7 @@ export const maybeTriggerOnlineLearning = async ({ debateId, topic, totalRounds,
     return {
       triggered: true,
       reason: 'workflow_dispatched',
+      triggerSource: artifactReady && !debateReady ? 'artifact_feedback' : 'debate_outcome',
       workflowFile,
       ref,
       debateId,
@@ -157,6 +168,7 @@ export const maybeTriggerOnlineLearning = async ({ debateId, topic, totalRounds,
       totalRounds,
       rewardEventCount,
       preferencePairCount,
+      artifactFeedbackCount,
       messageCount: Array.isArray(messages) ? messages.length : 0,
       inputs,
     }

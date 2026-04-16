@@ -17,6 +17,11 @@ const isEnabled = (value, fallback = false) => {
   const normalized = String(value ?? (fallback ? 'true' : 'false')).trim().toLowerCase()
   return !['0', 'false', 'no', 'off'].includes(normalized)
 }
+const readPromptProfile = () => {
+  const explicit = String(process.env.VALIDATION_PROMPT_PROFILE || '').trim().toLowerCase()
+  if (explicit === 'full' || explicit === 'compact' || explicit === 'minimal') return explicit
+  return COMPACT_PROMPTS ? 'compact' : 'full'
+}
 const MAX_ROUNDS = Math.max(2, Math.min(4, Number.parseInt(process.env.VALIDATION_MAX_ROUNDS || '2', 10) || 2))
 const ROUND_MAX_TOKENS = readPositiveInt(process.env.VALIDATION_ROUND_MAX_TOKENS, 72, 24)
 const ANGEL_MAX_TOKENS = readPositiveInt(process.env.VALIDATION_ANGEL_MAX_TOKENS, 32, 16)
@@ -25,6 +30,7 @@ const SEARCH_NUM = Math.max(1, Math.min(6, Number.parseInt(process.env.VALIDATIO
 const OUTPUT_PATH = path.resolve(process.cwd(), process.env.VALIDATION_OUTPUT_PATH || 'outputs/orchestrator-validation.json')
 const ANGEL_SYSTEM_PROMPT = '당신은 신들의 천사입니다. 주어진 의견을 핵심 논점 2개만 짧게 요약하는 역할입니다. 반드시 한국어로 작성하세요.'
 const COMPACT_PROMPTS = isEnabled(process.env.VALIDATION_COMPACT_PROMPTS, true)
+const PROMPT_PROFILE = readPromptProfile()
 const ANGEL_SOURCE_CHARS = readPositiveInt(process.env.VALIDATION_ANGEL_SOURCE_CHARS, 360, 120)
 const DEBATE_CONTEXT_CHARS = readPositiveInt(process.env.VALIDATION_DEBATE_CONTEXT_CHARS, 220, 80)
 const CONSENSUS_CONTEXT_CHARS = readPositiveInt(process.env.VALIDATION_CONSENSUS_CONTEXT_CHARS, 90, 40)
@@ -182,7 +188,7 @@ const callInitialOpinion = async ({ agent, topic, transcript, searchContext }) =
   const result = await requestChat({
     agentId: agent.id,
     phase: 'initial',
-    systemPrompt: buildCouncilSystemPrompt(agent.id, 'initial', { compact: COMPACT_PROMPTS }),
+    systemPrompt: buildCouncilSystemPrompt(agent.id, 'initial', { profile: PROMPT_PROFILE, compact: PROMPT_PROFILE !== 'full' }),
     userMessage: buildInitialUserMessage({
       topic,
       transcript,
@@ -247,7 +253,7 @@ const callDebateOpinion = async ({ agent, topic, otherOpinions, round }) => {
   const result = await requestChat({
     agentId: agent.id,
     phase: 'debate',
-    systemPrompt: buildCouncilSystemPrompt(agent.id, 'debate', { compact: COMPACT_PROMPTS }),
+    systemPrompt: buildCouncilSystemPrompt(agent.id, 'debate', { profile: PROMPT_PROFILE, compact: PROMPT_PROFILE !== 'full' }),
     userMessage: `주제: ${topic}\n\n다른 임원들의 의견:\n${opinionsText}\n\n위 의견들에 대해 동의/반박/보완하며 토론하세요. 누구의 의견에 반응하는지 구체적으로 언급하세요.`,
     maxTokens: ROUND_MAX_TOKENS,
   })
@@ -277,7 +283,7 @@ const checkConsensus = async (topic, roundMessages) => {
   const result = await requestChat({
     agentId: AI_JUDGE.id,
     phase: 'judge-consensus',
-    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-consensus', { compact: COMPACT_PROMPTS }),
+    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-consensus', { profile: PROMPT_PROFILE, compact: PROMPT_PROFILE !== 'full' }),
     userMessage: `토론 주제: ${topic}\n\n최근 발언:\n${summary}\n\n이 토론에서 충분한 합의가 도출되었습니까? "예" 또는 "아니오"로만 답하세요.`,
     maxTokens: 10,
     temperature: 0.2,
@@ -309,7 +315,7 @@ const generateFinalConsensus = async (topic, spokenMessages) => {
   const result = await requestChat({
     agentId: AI_JUDGE.id,
     phase: 'judge-final',
-    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-final', { compact: COMPACT_PROMPTS }),
+    systemPrompt: buildCouncilSystemPrompt(AI_JUDGE.id, 'judge-final', { profile: PROMPT_PROFILE, compact: PROMPT_PROFILE !== 'full' }),
     userMessage: `주제: ${topic}\n\n${FINAL_USE_LAST_ROUND_ONLY ? '최종 라운드 요약' : '토론 요약'}:\n${summary}\n\n위 토론을 종합하여 최종 합의안을 작성하세요.`,
     maxTokens: FINAL_MAX_TOKENS,
     temperature: 0.2,
@@ -381,6 +387,7 @@ const main = async () => {
       useMemories: USE_MEMORIES,
       useSearch: USE_SEARCH,
       useObsidian: USE_OBSIDIAN,
+      promptProfile: PROMPT_PROFILE,
     },
     maxRounds: MAX_ROUNDS,
     roundMaxTokens: ROUND_MAX_TOKENS,

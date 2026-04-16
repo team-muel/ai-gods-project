@@ -1,4 +1,7 @@
 import { classifyRelationship, keywordSimilarity } from '../../src/lib/memoryScoring.js'
+import { buildDebateArtifacts, debateArtifactsToRows } from '../../src/lib/artifactBuilder.js'
+import { buildDebateDossier } from '../../src/lib/dossierBuilder.js'
+import { dossierClaimsToRows, evidenceItemsToRows, mergeEvidenceItems } from '../../src/lib/debateEvidence.js'
 import { buildPhysioLogs } from '../../src/lib/physioMetrics.js'
 import { maybeTriggerOnlineLearning } from '../../src/lib/onlineLearning.js'
 import { buildRewardLearningArtifacts, isRewardLearningUnavailableError } from '../../src/lib/rewardLearning.js'
@@ -24,6 +27,19 @@ const insertRowsBestEffort = async (supabase, table, rows, label) => {
 
   console.warn(`[debates/complete] ${label} 저장 경고:`, error.message)
 }
+
+const sanitizeCitationRefs = (refs = []) => (Array.isArray(refs) ? refs : [])
+  .slice(0, 12)
+  .map((ref) => ({
+    evidenceKey: String(ref?.evidenceKey || '').trim().toLowerCase(),
+    evidenceId: String(ref?.evidenceId || '').trim(),
+    localTag: String(ref?.localTag || '').trim(),
+    label: String(ref?.label || '').trim().slice(0, 220),
+    url: String(ref?.url || '').trim().slice(0, 600) || null,
+    sourceKind: String(ref?.sourceKind || '').trim().slice(0, 80) || null,
+    type: String(ref?.type || '').trim().slice(0, 40) || null,
+  }))
+  .filter((ref) => ref.evidenceKey || ref.url || ref.label)
 
 const saveDebateMemory = async (supabase, godId, { topic, content, consensus, debateId }) => {
   const { data: newMemory, error } = await supabase
@@ -98,6 +114,54 @@ const saveDebateMemory = async (supabase, godId, { topic, content, consensus, de
   }
 }
 
+const saveDebateDossier = async (supabase, dossier) => {
+  if (!dossier?.debateId) return
+
+  const { error } = await supabase
+    .from('debate_dossiers')
+    .upsert({
+      debate_id: dossier.debateId,
+      topic: dossier.topic,
+      dossier_status: dossier.status,
+      executive_summary: dossier.executiveSummary,
+      markdown_content: dossier.markdown,
+      structured_content: dossier,
+      evidence_count: Number(dossier?.metrics?.evidenceCount || 0),
+      claim_count: Number(dossier?.metrics?.claimCount || 0),
+      action_item_count: Number(dossier?.metrics?.actionItemCount || 0),
+      metadata: {
+        readiness_score: dossier.readinessScore,
+        generated_at: dossier.generatedAt,
+        source: dossier.source,
+        schema_version: dossier.schemaVersion,
+      },
+    }, { onConflict: 'debate_id' })
+
+  if (!error) return
+
+  if (isMissingRelationError(error)) {
+    console.warn('[debates/complete] debate_dossiers 테이블이 없어 dossier 저장을 건너뜁니다.')
+    return
+  }
+
+  console.warn('[debates/complete] dossier 저장 경고:', error.message)
+}
+
+const saveDebateEvidence = async (supabase, debateId, evidence) => {
+  const rows = evidenceItemsToRows({ debateId, evidence })
+  await insertRowsBestEffort(supabase, 'debate_evidence', rows, 'evidence')
+}
+
+const saveDebateClaims = async (supabase, debateId, claims) => {
+  const rows = dossierClaimsToRows({ debateId, claims })
+  await insertRowsBestEffort(supabase, 'debate_claims', rows, 'claim')
+}
+
+const saveDebateArtifacts = async (supabase, debateId, artifacts) => {
+  const rows = debateArtifactsToRows({ debateId, artifacts })
+  await insertRowsBestEffort(supabase, 'debate_artifacts', rows, 'artifact')
+}
+
 export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['POST'] })) return
   if (!enforceRateLimit(req, res, { bucket: 'debate-complete', limit: 12, windowMs: 10 * 60 * 1000 })) return
@@ -114,6 +178,7 @@ export default async function handler(req, res) {
   const isYoutube = Boolean(body?.isYoutube)
   const physioLogged = Boolean(body?.physioLogged)
   const totalRounds = Number.isFinite(Number(body?.totalRounds)) ? Math.max(1, Number(body.totalRounds)) : 1
+  const providedEvidence = mergeEvidenceItems(Array.isArray(body?.evidence) ? body.evidence.slice(0, 40) : [])
   const spokenMessages = Array.isArray(body?.messages)
     ? body.messages
         .slice(-160)
@@ -124,6 +189,7 @@ export default async function handler(req, res) {
           round: Math.max(1, Number(message.round) || 1),
           content: String(message.content).slice(0, 4000),
           createdAt: typeof message.timestamp === 'string' && message.timestamp ? message.timestamp : new Date().toISOString(),
+          citationRefs: sanitizeCitationRefs(message.citationRefs),
         }))
     : []
 
@@ -164,6 +230,18 @@ export default async function handler(req, res) {
       throw new Error(messageError.message || '메시지 저장에 실패했습니다.')
     }
 
+    const dossier = buildDebateDossier({
+      debateId,
+      topic,
+      totalRounds,
+      consensus,
+      messages: spokenMessages,
+      evidence: providedEvidence,
+      isYoutube,
+      source: 'api_debate_complete',
+    })
+    const artifacts = buildDebateArtifacts({ dossier })
+
     if (!physioLogged) {
       const { neuroRows, arousalRows, immuneRows } = buildPhysioLogs({
         debateId,
@@ -190,6 +268,11 @@ export default async function handler(req, res) {
         debateId,
       })
     }
+
+    await saveDebateDossier(supabase, dossier)
+  await saveDebateEvidence(supabase, debateId, dossier.evidence)
+  await saveDebateClaims(supabase, debateId, dossier.claims)
+    await saveDebateArtifacts(supabase, debateId, artifacts)
 
     const { rewardEvents, preferencePairs } = buildRewardLearningArtifacts({
       debateId,
@@ -220,6 +303,8 @@ export default async function handler(req, res) {
       messages: messageRows,
       rewardEvents,
       preferencePairs,
+      dossier,
+      artifacts,
       source: 'api_debate_complete',
     })
 
@@ -241,7 +326,7 @@ export default async function handler(req, res) {
       console.info('[debates/complete] online learning:', onlineLearning)
     }
 
-    return sendJson(res, 200, { ok: true, debateId, onlineLearning })
+    return sendJson(res, 200, { ok: true, debateId, dossier, artifacts, onlineLearning })
   } catch (error) {
     return sendJson(res, 500, { error: error.message || '토론 저장 중 오류가 발생했습니다.' })
   }
