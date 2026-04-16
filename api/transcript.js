@@ -1,4 +1,4 @@
-import { enforceRateLimit, ensureRequestAllowed, sendJson } from './_requestGuard.js'
+import { enforceRateLimit, ensureRequestAllowed, getRequestQuery, sendJson } from './_requestGuard.js'
 
 const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{6,20}$/
 
@@ -6,7 +6,8 @@ export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['GET'] })) return
   if (!enforceRateLimit(req, res, { bucket: 'youtube-transcript', limit: 20, windowMs: 10 * 60 * 1000 })) return
 
-  const videoId = String(req.query?.videoId || '').trim()
+  const query = getRequestQuery(req)
+  const videoId = String(query.videoId || '').trim()
 
   if (!videoId) {
     return sendJson(res, 400, { error: 'videoId 파라미터가 필요합니다.' })

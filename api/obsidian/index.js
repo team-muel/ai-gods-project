@@ -3,14 +3,15 @@
  * GET  /api/obsidian/search  -> rewritten to /api/obsidian
  * POST /api/obsidian/write   -> rewritten to /api/obsidian
  */
-import { enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
+import { enforceRateLimit, ensureRequestAllowed, getRequestQuery, parseJsonBody, sendJson } from '../_requestGuard.js'
 import { getSupabaseServerClient } from '../_supabaseAdmin.js'
 
 const handleSearch = async (req, res) => {
   if (!enforceRateLimit(req, res, { bucket: 'obsidian-search', limit: 30, windowMs: 10 * 60 * 1000 })) return
 
-  const godId = String(req.query?.godId || '').trim().slice(0, 64)
-  const q = String(req.query?.q || '').trim().slice(0, 200)
+  const query = getRequestQuery(req)
+  const godId = String(query.godId || '').trim().slice(0, 64)
+  const q = String(query.q || '').trim().slice(0, 200)
 
   if (!godId) {
     return sendJson(res, 400, { notes: [] })

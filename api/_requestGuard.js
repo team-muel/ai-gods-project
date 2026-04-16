@@ -23,6 +23,42 @@ const parseRefererOrigin = (value = '') => {
   }
 }
 
+const buildRequestUrl = (req) => {
+  const host = getHost(req) || 'localhost'
+  const protocol = getProtocol(req, host)
+
+  try {
+    return new URL(String(req?.url || '/'), `${protocol}://${host}`)
+  } catch {
+    return new URL('/', `${protocol}://${host}`)
+  }
+}
+
+export const getRequestQuery = (req) => {
+  if (req?.__aiGodsQuery && typeof req.__aiGodsQuery === 'object') {
+    return req.__aiGodsQuery
+  }
+
+  const query = Object.create(null)
+  const requestUrl = buildRequestUrl(req)
+
+  for (const [key, value] of requestUrl.searchParams.entries()) {
+    const current = query[key]
+    if (current === undefined) {
+      query[key] = value
+      continue
+    }
+
+    query[key] = Array.isArray(current) ? [...current, value] : [current, value]
+  }
+
+  if (req && typeof req === 'object') {
+    req.__aiGodsQuery = query
+  }
+
+  return query
+}
+
 export const sendJson = (res, statusCode, payload) => {
   res.statusCode = statusCode
   res.setHeader('Content-Type', 'application/json; charset=utf-8')

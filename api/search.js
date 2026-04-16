@@ -1,4 +1,4 @@
-import { clampInteger, enforceRateLimit, ensureRequestAllowed, sendJson } from './_requestGuard.js'
+import { clampInteger, enforceRateLimit, ensureRequestAllowed, getRequestQuery, sendJson } from './_requestGuard.js'
 import { enrichAcademicResultsWithFullText } from './_academicFullText.js'
 
 const DEFAULT_TIMEOUT_MS = 12000
@@ -753,7 +753,11 @@ const searchDuckDuckGo = async (query, num) => {
     }
   )
 
-  if (!response.ok) throw new Error(`DuckDuckGo 응답 오류: ${response.status}`)
+  if (!response.ok) {
+    if (response.status === 403) return []
+    throw new Error(`DuckDuckGo 응답 오류: ${response.status}`)
+  }
+
   const html = await response.text()
   return parseDuckDuckGoResults(html, num)
 }
@@ -2667,8 +2671,9 @@ export default async function handler(req, res) {
   if (!ensureRequestAllowed(req, res, { methods: ['GET'] })) return
   if (!enforceRateLimit(req, res, { bucket: 'search', limit: 30, windowMs: 10 * 60 * 1000 })) return
 
-  const q = String(req.query?.q || '').trim().slice(0, 200)
-  const num = clampInteger(req.query?.num, 1, 10, 5)
+  const query = getRequestQuery(req)
+  const q = String(query.q || '').trim().slice(0, 200)
+  const num = clampInteger(query.num, 1, 10, 5)
 
   if (!q) return sendJson(res, 400, { error: 'q 파라미터가 필요합니다.' })
 
