@@ -25,8 +25,13 @@ const ALLOWED_HTML_HOST_PATTERNS = [
 let cachedPdfParseClass = null
 let attemptedPdfParseLoad = false
 let cachedPdfRuntimeSupport = null
+let cachedPdfFullTextEnabled = null
 
 const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
+
+const isTruthyEnv = (value = '') => ['1', 'true', 'yes', 'on'].includes(cleanText(value).toLowerCase())
+
+const isFalsyEnv = (value = '') => ['0', 'false', 'no', 'off'].includes(cleanText(value).toLowerCase())
 
 const hasPdfRuntimeSupport = () => {
   if (cachedPdfRuntimeSupport !== null) return cachedPdfRuntimeSupport
@@ -58,6 +63,29 @@ const getPdfParseClass = async () => {
     cachedPdfParseClass = null
     return null
   }
+}
+
+const isPdfFullTextEnabled = () => {
+  if (cachedPdfFullTextEnabled !== null) return cachedPdfFullTextEnabled
+
+  const override = cleanText(process.env.ACADEMIC_FULL_TEXT_PDF_ENABLED || '')
+  if (isTruthyEnv(override)) {
+    cachedPdfFullTextEnabled = true
+    return cachedPdfFullTextEnabled
+  }
+
+  if (isFalsyEnv(override)) {
+    cachedPdfFullTextEnabled = false
+    return cachedPdfFullTextEnabled
+  }
+
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    cachedPdfFullTextEnabled = false
+    return cachedPdfFullTextEnabled
+  }
+
+  cachedPdfFullTextEnabled = hasPdfRuntimeSupport()
+  return cachedPdfFullTextEnabled
 }
 
 const toHttpsUrl = (value = '', baseUrl = '') => {
@@ -289,6 +317,7 @@ const buildCandidateList = (item = {}) => {
   const pmcid = normalizePmcId(externalIds.pmcid || '')
   const arxivId = cleanText(externalIds.arxivId || '')
   const openreviewForumId = cleanText(externalIds.openreviewForumId || '')
+  const allowPdfCandidates = isPdfFullTextEnabled()
 
   const candidates = []
   const addCandidate = (url, kind, label) => {
@@ -306,21 +335,27 @@ const buildCandidateList = (item = {}) => {
     addCandidate(`https://pmc.ncbi.nlm.nih.gov/articles/${encodeURIComponent(pmcid)}/`, 'html', 'PMC article HTML')
   }
 
-  if (rawFullTextUrl) addCandidate(rawFullTextUrl, detectCandidateKind(rawFullTextUrl), 'Provider full text')
-  if (rawPdfUrl) addCandidate(rawPdfUrl, 'pdf', 'Open-access PDF')
+  if (rawFullTextUrl) {
+    const candidateKind = detectCandidateKind(rawFullTextUrl)
+    if (candidateKind !== 'pdf' || allowPdfCandidates) {
+      addCandidate(rawFullTextUrl, candidateKind, 'Provider full text')
+    }
+  }
+
+  if (allowPdfCandidates && rawPdfUrl) addCandidate(rawPdfUrl, 'pdf', 'Open-access PDF')
 
   if (arxivId) {
     addCandidate(`https://ar5iv.labs.arxiv.org/html/${encodeURIComponent(arxivId)}`, 'html', 'ar5iv HTML')
-    addCandidate(`https://arxiv.org/pdf/${encodeURIComponent(arxivId)}.pdf`, 'pdf', 'arXiv PDF')
+    if (allowPdfCandidates) addCandidate(`https://arxiv.org/pdf/${encodeURIComponent(arxivId)}.pdf`, 'pdf', 'arXiv PDF')
   }
 
-  if (openreviewForumId) {
+  if (allowPdfCandidates && openreviewForumId) {
     addCandidate(`https://openreview.net/pdf?id=${encodeURIComponent(openreviewForumId)}`, 'pdf', 'OpenReview PDF')
   }
 
   if (isAllowedHtmlUrl(landingPageUrl)) addCandidate(landingPageUrl, 'html', 'Landing page HTML')
   if (isAllowedHtmlUrl(primaryUrl)) addCandidate(primaryUrl, 'html', 'Primary article HTML')
-  if (/\.pdf($|\?)/i.test(primaryUrl)) addCandidate(primaryUrl, 'pdf', 'Primary PDF')
+  if (allowPdfCandidates && /\.pdf($|\?)/i.test(primaryUrl)) addCandidate(primaryUrl, 'pdf', 'Primary PDF')
 
   const seen = new Set()
   return candidates.filter((candidate) => {
@@ -352,6 +387,10 @@ const extractHtmlText = async (url, timeoutMs) => {
 }
 
 const extractPdfText = async (url, timeoutMs) => {
+  if (!isPdfFullTextEnabled()) {
+    throw new Error('pdf full text disabled')
+  }
+
   if (!hasPdfRuntimeSupport()) {
     throw new Error('pdf runtime unavailable')
   }
