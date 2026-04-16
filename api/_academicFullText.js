@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer'
-import { PDFParse } from 'pdf-parse'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
 
 const DEFAULT_TIMEOUT_MS = 10000
 const DEFAULT_MAX_ITEMS = 2
@@ -20,7 +22,43 @@ const ALLOWED_HTML_HOST_PATTERNS = [
   /(?:^|\.)medrxiv\.org$/i,
 ]
 
+let cachedPdfParseClass = null
+let attemptedPdfParseLoad = false
+let cachedPdfRuntimeSupport = null
+
 const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
+
+const hasPdfRuntimeSupport = () => {
+  if (cachedPdfRuntimeSupport !== null) return cachedPdfRuntimeSupport
+  if (typeof globalThis.DOMMatrix !== 'undefined') {
+    cachedPdfRuntimeSupport = true
+    return cachedPdfRuntimeSupport
+  }
+
+  try {
+    require.resolve('@napi-rs/canvas')
+    cachedPdfRuntimeSupport = true
+    return cachedPdfRuntimeSupport
+  } catch {
+    cachedPdfRuntimeSupport = false
+    return cachedPdfRuntimeSupport
+  }
+}
+
+const getPdfParseClass = async () => {
+  if (cachedPdfParseClass) return cachedPdfParseClass
+  if (attemptedPdfParseLoad) return null
+  attemptedPdfParseLoad = true
+
+  try {
+    const module = await import('pdf-parse')
+    cachedPdfParseClass = module?.PDFParse || null
+    return cachedPdfParseClass
+  } catch {
+    cachedPdfParseClass = null
+    return null
+  }
+}
 
 const toHttpsUrl = (value = '', baseUrl = '') => {
   const text = cleanText(value)
@@ -314,6 +352,15 @@ const extractHtmlText = async (url, timeoutMs) => {
 }
 
 const extractPdfText = async (url, timeoutMs) => {
+  if (!hasPdfRuntimeSupport()) {
+    throw new Error('pdf runtime unavailable')
+  }
+
+  const PDFParse = await getPdfParseClass()
+  if (!PDFParse) {
+    throw new Error('pdf parser unavailable')
+  }
+
   const response = await fetchWithTimeout(url, {
     headers: {
       Accept: 'application/pdf,*/*;q=0.8',
