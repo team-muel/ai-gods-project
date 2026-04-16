@@ -1,11 +1,28 @@
 import { Buffer } from 'node:buffer'
+import { createRequire } from 'node:module'
 import { AlignmentType, BorderStyle, Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx'
 import { google } from 'googleapis'
-import PptxGenJS from 'pptxgenjs'
 import { clearGoogleOAuthSession, createGoogleAuthError, getGoogleAuthForRequest } from '../_googleOAuth.js'
 import { enforceRateLimit, ensureRequestAllowed, parseJsonBody, sendJson } from '../_requestGuard.js'
 
+const require = createRequire(import.meta.url)
+let cachedPptxGenJS = null
+
 const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
+
+const getPptxGenJS = async () => {
+  if (cachedPptxGenJS) return cachedPptxGenJS
+
+  try {
+    const module = require('pptxgenjs')
+    cachedPptxGenJS = module?.default || module
+    return cachedPptxGenJS
+  } catch {
+    const module = await import('pptxgenjs')
+    cachedPptxGenJS = module?.default || module
+    return cachedPptxGenJS
+  }
+}
 
 const sanitizeFileName = (value = '', extension = '') => {
   const safe = cleanText(value)
@@ -549,6 +566,7 @@ const buildDocxBuffer = async ({ title, markdown, artifact }) => {
 }
 
 const buildPptxBuffer = async ({ title, slides = [], artifact }) => {
+  const PptxGenJS = await getPptxGenJS()
   const pptx = new PptxGenJS()
   pptx.layout = 'LAYOUT_WIDE'
   pptx.author = 'AI Gods'

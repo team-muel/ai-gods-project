@@ -1,6 +1,3 @@
-import exportHandler from './_export.js'
-import feedbackHandler from './_feedback.js'
-import generateHandler from './_generate.js'
 import { sendJson } from '../_requestGuard.js'
 
 const getRouteSuffix = (req, basePath) => {
@@ -22,9 +19,20 @@ const getRouteSuffix = (req, basePath) => {
 export default async function handler(req, res) {
   const route = getRouteSuffix(req, '/api/artifacts')
 
-  if (route === 'generate') return await generateHandler(req, res)
-  if (route === 'export') return await exportHandler(req, res)
-  if (route === 'feedback') return await feedbackHandler(req, res)
+  if (route === 'generate') {
+    const { default: generateHandler } = await import('./_generate.js')
+    return await generateHandler(req, res)
+  }
+
+  if (route === 'export') {
+    const { default: exportHandler } = await import('./_export.js')
+    return await exportHandler(req, res)
+  }
+
+  if (route === 'feedback') {
+    const { default: feedbackHandler } = await import('./_feedback.js')
+    return await feedbackHandler(req, res)
+  }
 
   return sendJson(res, 404, { error: '지원하지 않는 artifacts route 입니다.' })
 }
