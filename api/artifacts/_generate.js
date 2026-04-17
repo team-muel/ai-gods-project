@@ -5,6 +5,116 @@ import { buildDebateDossier } from '../../src/lib/dossierBuilder.js'
 
 const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
 
+const normalizeBrief = (brief = {}) => ({
+  overview: cleanText(brief?.overview || '').slice(0, 600),
+  domain: cleanText(brief?.domain || '').slice(0, 40),
+  domainLabel: cleanText(brief?.domainLabel || '').slice(0, 80),
+  visualTheme: cleanText(brief?.visualTheme || '').slice(0, 40),
+  visualPreset: cleanText(brief?.visualPreset || '').slice(0, 40),
+  textDensity: cleanText(brief?.textDensity || '').slice(0, 24),
+  aiImageMode: cleanText(brief?.aiImageMode || '').slice(0, 24),
+  imageSource: cleanText(brief?.imageSource || '').slice(0, 24),
+  imageStylePreset: cleanText(brief?.imageStylePreset || '').slice(0, 40),
+  cardCount: clampInteger(brief?.cardCount, 4, 10, 6),
+  layoutPreset: cleanText(brief?.layoutPreset || '').slice(0, 24),
+  language: cleanText(brief?.language || '').slice(0, 24),
+  writingNote: cleanText(brief?.writingNote || '').slice(0, 240),
+  toneNote: cleanText(brief?.toneNote || '').slice(0, 240),
+  debateUsage: cleanText(brief?.debateUsage || '').slice(0, 24),
+  mode: cleanText(brief?.mode || '').slice(0, 24),
+  outlineTitles: (Array.isArray(brief?.outlineTitles) ? brief.outlineTitles : [])
+    .map((item) => cleanText(item))
+    .filter(Boolean)
+    .slice(0, 8),
+})
+
+const buildBriefPreferenceLines = (brief = {}, { artifactType = 'report' } = {}) => {
+  const domainLabel = brief?.domainLabel || brief?.domain || ''
+  const lines = [
+    domainLabel ? `도메인: ${domainLabel}` : null,
+    brief?.visualTheme ? `시각 테마: ${brief.visualTheme}` : null,
+    brief?.visualPreset ? `테마 프리셋: ${brief.visualPreset}` : null,
+    brief?.textDensity ? `텍스트 양: ${brief.textDensity}` : null,
+    brief?.aiImageMode ? `AI 이미지: ${brief.aiImageMode}` : null,
+    brief?.imageSource ? `이미지 출처: ${brief.imageSource}` : null,
+    brief?.imageStylePreset ? `이미지 스타일: ${brief.imageStylePreset}` : null,
+    brief?.cardCount ? `카드 수: ${brief.cardCount}` : null,
+    brief?.layoutPreset ? `레이아웃 모드: ${brief.layoutPreset}` : null,
+    brief?.language ? `언어: ${brief.language}` : null,
+    brief?.writingNote ? `추가 작성 메모: ${brief.writingNote}` : null,
+    brief?.toneNote ? `톤 메모: ${brief.toneNote}` : null,
+    brief?.debateUsage ? `토론 인사이트 활용: ${brief.debateUsage}` : null,
+  ]
+
+  if (brief?.outlineTitles?.length) {
+    lines.push(`${artifactType === 'slides' ? '슬라이드' : '문서'} 윤곽선: ${brief.outlineTitles.join(' -> ')}`)
+  }
+
+  return lines.filter(Boolean)
+}
+
+const buildBriefMessages = ({ topic = '', instructions = '', audience = '', brief = {}, mode = 'docs' } = {}) => {
+  const outputLabel = mode === 'ppt' ? '발표자료' : '문서'
+  const outlineLabel = brief?.outlineTitles?.length > 0
+    ? brief.outlineTitles.join(' / ')
+    : outputLabel === '발표자료'
+      ? 'Cover / Core insight / Evidence / Next step'
+      : '표지 / 배경 / 분석 / 결론'
+
+  return [
+    {
+      godId: 'brief-orchestrator',
+      god: 'Brief Orchestrator',
+      round: 1,
+      content: `목표 ${outputLabel}: ${topic}. 대상 독자/청중: ${audience || '일반 사용자'}. 도메인: ${brief?.domainLabel || brief?.domain || '일반'}.`,
+    },
+    {
+      godId: 'structure-designer',
+      god: 'Structure Designer',
+      round: 1,
+      content: `권장 윤곽선: ${outlineLabel}. ${outputLabel}은 토론 요약이 아니라 바로 제출/발표 가능한 구조로 설계해야 합니다.`,
+    },
+    {
+      godId: 'visual-director',
+      god: 'Visual Director',
+      round: 1,
+      content: `시각 테마 ${brief?.visualTheme || 'business'}, 프리셋 ${brief?.visualPreset || 'default'}, 텍스트 양 ${brief?.textDensity || 'balanced'}, AI 이미지 ${brief?.aiImageMode || 'support'}, 이미지 출처 ${brief?.imageSource || 'ai'}, 이미지 스타일 ${brief?.imageStylePreset || 'default'}. 추가 요청: ${instructions || '없음'}.`,
+    },
+  ]
+}
+
+const buildBriefConsensus = ({ topic = '', instructions = '', audience = '', brief = {}, mode = 'docs' } = {}) => {
+  const outputLabel = mode === 'ppt' ? '발표자료' : '문서'
+  const densityText = brief?.textDensity === 'dense'
+    ? '배경과 설명을 충분히 포함합니다.'
+    : brief?.textDensity === 'light'
+      ? '메시지를 짧고 선명하게 유지합니다.'
+      : '설명과 압축의 균형을 유지합니다.'
+  const imageText = brief?.aiImageMode === 'off'
+    ? '텍스트와 데이터 중심 구조를 유지합니다.'
+    : brief?.aiImageMode === 'hero'
+      ? '시각 컨셉을 장표/섹션 분위기에 적극 반영합니다.'
+      : '필요한 visual cue만 보조적으로 사용합니다.'
+
+  return [
+    '📊 핵심 합의점 3가지',
+    `1. ${topic}를 ${audience || '일반 사용자'} 대상 ${outputLabel}로 구조화합니다.`,
+    `2. ${brief?.outlineTitles?.length > 0 ? `구성은 ${brief.outlineTitles.join(', ')} 순을 우선합니다.` : '브리프 중심으로 배경, 핵심 논점, 결론 흐름을 분명히 나눕니다.'}`,
+    `3. ${densityText} ${imageText}`,
+    brief?.layoutPreset ? `4. 레이아웃 모드는 ${brief.layoutPreset}을 우선하고, 언어는 ${brief.language || 'ko'} 기준으로 맞춥니다.` : null,
+    '',
+    '⚡ 주요 이견',
+    brief?.debateUsage === 'off'
+      ? '- 토론 인사이트는 기본 입력으로 사용하지 않고 브리프 중심으로 설계합니다.'
+      : '- 필요 시 토론 인사이트를 보조 재료로 참조하되 결과물은 독립적인 장르로 구성합니다.',
+    '',
+    '✅ 권고사항',
+    `- 단기: ${instructions || topic}`,
+    `- 중기: ${brief?.visualTheme ? `${brief.visualTheme} 테마에 맞는 레이아웃과 메시지 톤을 고정합니다.` : '형식에 맞는 레이아웃과 메시지 톤을 고정합니다.'}`,
+    `- 장기: export 가능한 ${outputLabel} 완성본으로 다듬습니다.`,
+  ].filter(Boolean).join('\n')
+}
+
 const normalizeCitationControl = (value = '') => {
   const normalized = cleanText(value).toLowerCase()
   return normalized === 'auto' ? '' : normalized.slice(0, 32)
@@ -239,62 +349,74 @@ const enforceReportMarkdownCitationPolicy = (markdown = '', citationPolicy = {})
 }
 
 const refineReportMarkdown = async ({ dossier, instructions, audience, baseMarkdown, citationPolicy, reportProfile }) => {
-  const content = await callTextGeneration({
-    systemPrompt: '당신은 증거 기반 전략 보고서 작성자입니다. 반드시 한국어 markdown만 출력하세요. 문체는 paper-like executive memo 형식으로 유지하되, 기존 초안의 섹션 제목과 섹션 순서를 최대한 유지하세요. citation이 강하고 scholar 점수가 높은 학술 근거를 먼저 배치하세요. benchmark/leaderboard, peer-reviewed, 다중 인덱싱, top venue 신호는 강한 보강 근거로 취급하고, Hugging Face upvotes/collections 같은 커뮤니티 신호는 보조 지표로만 사용하세요. 약한 근거는 추가 검증 필요라고 명시하세요. 직접 인용은 제공된 excerpt 범위 안에서만 허용하고, 인용이나 근거 문장 근처에는 원문 링크를 함께 남기세요. URL 없는 문장을 인용문처럼 쓰지 마세요.',
-    userPrompt: [
-      `주제: ${dossier.topic}`,
-      audience ? `독자: ${audience}` : null,
-      instructions ? `사용자 요청: ${instructions}` : null,
-      buildReportProfilePrompt(reportProfile),
-      `Executive summary: ${dossier.executiveSummary}`,
-      `핵심 주장: ${(dossier.claims || []).map((claim) => claim.statement).join(' | ') || '없음'}`,
-      `근거 목록:\n${formatEvidenceForPrompt(dossier.evidence) || '없음'}`,
-      `Citation 평균 점수: ${dossier.citationSummary?.averageCitationScore || 0}/100`,
-      `Scholarly 신호 요약: ${formatScholarlySummaryForPrompt(dossier)}`,
-      dossier.evidenceGaps?.length ? `남은 공백: ${dossier.evidenceGaps.slice(0, 3).join(' | ')}` : null,
-      '인용 규칙: 제공된 excerpt 안의 표현만 quote처럼 사용할 수 있으며, 각 근거에는 원문 링크를 보존하세요.',
-      buildCitationPolicyPrompt(citationPolicy, { artifactType: 'report' }),
-      '섹션 규칙: 기존 초안의 ## 섹션 제목과 순서를 유지하고, 각 섹션에 배정된 근거는 그 섹션 안에만 남겨두세요.',
-      '기존 초안:',
-      baseMarkdown,
-      '위 정보를 바탕으로 더 읽기 좋은 최종 보고서 markdown을 다시 작성하세요. 단순히 최종 결론을 길게 풀어쓰지 말고, 섹션별 역할이 보이도록 실제 과제물/전략문서처럼 다시 구성하세요.',
-    ].filter(Boolean).join('\n\n'),
-    maxTokens: 1300,
-    temperature: 0.28,
-    topP: 0.9,
-  })
+  try {
+    const content = await callTextGeneration({
+      systemPrompt: '당신은 증거 기반 전략 보고서 작성자입니다. 반드시 한국어 markdown만 출력하세요. 문체는 paper-like executive memo 형식으로 유지하되, 기존 초안의 섹션 제목과 섹션 순서를 최대한 유지하세요. citation이 강하고 scholar 점수가 높은 학술 근거를 먼저 배치하세요. benchmark/leaderboard, peer-reviewed, 다중 인덱싱, top venue 신호는 강한 보강 근거로 취급하고, Hugging Face upvotes/collections 같은 커뮤니티 신호는 보조 지표로만 사용하세요. 약한 근거는 추가 검증 필요라고 명시하세요. 직접 인용은 제공된 excerpt 범위 안에서만 허용하고, 인용이나 근거 문장 근처에는 원문 링크를 함께 남기세요. URL 없는 문장을 인용문처럼 쓰지 마세요.',
+      userPrompt: [
+        `주제: ${dossier.topic}`,
+        audience ? `독자: ${audience}` : null,
+        instructions ? `사용자 요청: ${instructions}` : null,
+        ...buildBriefPreferenceLines(dossier?.brief || {}, { artifactType: 'report' }),
+        buildReportProfilePrompt(reportProfile),
+        `Executive summary: ${dossier.executiveSummary}`,
+        `핵심 주장: ${(dossier.claims || []).map((claim) => claim.statement).join(' | ') || '없음'}`,
+        `근거 목록:\n${formatEvidenceForPrompt(dossier.evidence) || '없음'}`,
+        `Citation 평균 점수: ${dossier.citationSummary?.averageCitationScore || 0}/100`,
+        `Scholarly 신호 요약: ${formatScholarlySummaryForPrompt(dossier)}`,
+        dossier.evidenceGaps?.length ? `남은 공백: ${dossier.evidenceGaps.slice(0, 3).join(' | ')}` : null,
+        '인용 규칙: 제공된 excerpt 안의 표현만 quote처럼 사용할 수 있으며, 각 근거에는 원문 링크를 보존하세요.',
+        buildCitationPolicyPrompt(citationPolicy, { artifactType: 'report' }),
+        '섹션 규칙: 기존 초안의 ## 섹션 제목과 순서를 유지하고, 각 섹션에 배정된 근거는 그 섹션 안에만 남겨두세요.',
+        '기존 초안:',
+        baseMarkdown,
+        '위 정보를 바탕으로 더 읽기 좋은 최종 보고서 markdown을 다시 작성하세요. 단순히 최종 결론을 길게 풀어쓰지 말고, 섹션별 역할이 보이도록 실제 과제물/전략문서처럼 다시 구성하세요.',
+      ].filter(Boolean).join('\n\n'),
+      maxTokens: 1300,
+      temperature: 0.28,
+      topP: 0.9,
+    })
 
-  return enforceReportMarkdownCitationPolicy(cleanText(content) ? content.trim() : baseMarkdown, citationPolicy)
+    return enforceReportMarkdownCitationPolicy(cleanText(content) ? content.trim() : baseMarkdown, citationPolicy)
+  } catch (error) {
+    console.warn('[artifacts] report refinement skipped:', error?.message || error)
+    return enforceReportMarkdownCitationPolicy(baseMarkdown, citationPolicy)
+  }
 }
 
 const refineSlides = async ({ dossier, instructions, audience, baseSlides, citationPolicy, slideProfile }) => {
-  const content = await callTextGeneration({
-    systemPrompt: '당신은 임원용 발표자료 설계자입니다. 반드시 JSON 배열만 출력하세요. 각 항목은 {"title":"...","kicker":"...","layout":"hero|split|evidence|metrics|content|closing","bullets":["..."],"citations":["..."]} 형식입니다. 슬라이드는 최대 6장입니다. 기존 초안의 슬라이드 순서와 역할을 최대한 유지하세요. 첫 장은 hero, 마지막 장은 closing을 우선 사용하세요. 가장 강한 학술 근거 1~2개와 그 이유(scholar, benchmark, peer-reviewed 여부, venue tier)를 필요할 때만 드러내세요. 커뮤니티 신호는 보조 정보로만 사용하세요. 인용은 제공된 excerpt 범위 안에서만 쓰고, citations에는 원문 링크를 그대로 남기세요.',
-    userPrompt: [
-      `주제: ${dossier.topic}`,
-      audience ? `청중: ${audience}` : null,
-      instructions ? `사용자 요청: ${instructions}` : null,
-      buildSlideProfilePrompt(slideProfile),
-      `Executive summary: ${dossier.executiveSummary}`,
-      `핵심 주장: ${(dossier.claims || []).map((claim) => claim.statement).join(' | ') || '없음'}`,
-      `근거 목록:\n${formatEvidenceForPrompt(dossier.evidence) || '없음'}`,
-      `Scholarly 신호 요약: ${formatScholarlySummaryForPrompt(dossier)}`,
-      dossier.evidenceGaps?.length ? `남은 공백: ${dossier.evidenceGaps.slice(0, 3).join(' | ')}` : null,
-      '슬라이드 규칙: quote-like 문장은 excerpt 범위 안에서만 사용하고, citations에는 원문 링크를 그대로 보존하세요.',
-      buildCitationPolicyPrompt(citationPolicy, { artifactType: 'slides' }),
-      '구조 규칙: 기존 초안의 슬라이드 제목과 순서를 최대한 유지하고, 슬라이드별 citation 위치를 섞지 마세요.',
-      `기존 슬라이드 초안:\n${buildSlideMarkdown(baseSlides)}`,
-      '더 날카롭고 발표하기 쉬운 슬라이드 개요를 JSON 배열로 다시 작성하세요. 보고서 요약본처럼 길게 설명하지 말고, 실제 발표용 headline + support bullets 구조로 다듬으세요.',
-    ].filter(Boolean).join('\n\n'),
-    maxTokens: 900,
-    temperature: 0.32,
-    topP: 0.9,
-  })
+  try {
+    const content = await callTextGeneration({
+      systemPrompt: '당신은 임원용 발표자료 설계자입니다. 반드시 JSON 배열만 출력하세요. 각 항목은 {"title":"...","kicker":"...","layout":"hero|split|evidence|metrics|content|closing","bullets":["..."],"citations":["..."]} 형식입니다. 슬라이드는 최대 6장입니다. 기존 초안의 슬라이드 순서와 역할을 최대한 유지하세요. 첫 장은 hero, 마지막 장은 closing을 우선 사용하세요. 가장 강한 학술 근거 1~2개와 그 이유(scholar, benchmark, peer-reviewed 여부, venue tier)를 필요할 때만 드러내세요. 커뮤니티 신호는 보조 정보로만 사용하세요. 인용은 제공된 excerpt 범위 안에서만 쓰고, citations에는 원문 링크를 그대로 남기세요.',
+      userPrompt: [
+        `주제: ${dossier.topic}`,
+        audience ? `청중: ${audience}` : null,
+        instructions ? `사용자 요청: ${instructions}` : null,
+        ...buildBriefPreferenceLines(dossier?.brief || {}, { artifactType: 'slides' }),
+        buildSlideProfilePrompt(slideProfile),
+        `Executive summary: ${dossier.executiveSummary}`,
+        `핵심 주장: ${(dossier.claims || []).map((claim) => claim.statement).join(' | ') || '없음'}`,
+        `근거 목록:\n${formatEvidenceForPrompt(dossier.evidence) || '없음'}`,
+        `Scholarly 신호 요약: ${formatScholarlySummaryForPrompt(dossier)}`,
+        dossier.evidenceGaps?.length ? `남은 공백: ${dossier.evidenceGaps.slice(0, 3).join(' | ')}` : null,
+        '슬라이드 규칙: quote-like 문장은 excerpt 범위 안에서만 사용하고, citations에는 원문 링크를 그대로 보존하세요.',
+        buildCitationPolicyPrompt(citationPolicy, { artifactType: 'slides' }),
+        '구조 규칙: 기존 초안의 슬라이드 제목과 순서를 최대한 유지하고, 슬라이드별 citation 위치를 섞지 마세요.',
+        `기존 슬라이드 초안:\n${buildSlideMarkdown(baseSlides)}`,
+        '더 날카롭고 발표하기 쉬운 슬라이드 개요를 JSON 배열로 다시 작성하세요. 보고서 요약본처럼 길게 설명하지 말고, 실제 발표용 headline + support bullets 구조로 다듬으세요.',
+      ].filter(Boolean).join('\n\n'),
+      maxTokens: 900,
+      temperature: 0.32,
+      topP: 0.9,
+    })
 
-  const parsed = parseJsonBlock(content, [])
-  const slides = normalizeSlideOutline(Array.isArray(parsed) ? parsed : parsed?.slides)
-  const mergedSlides = slides.length > 0 ? mergeRefinedSlidesWithBase(baseSlides, slides) : baseSlides
-  return enforceSlideCitationPolicy(mergedSlides, citationPolicy, dossier.evidence || [])
+    const parsed = parseJsonBlock(content, [])
+    const slides = normalizeSlideOutline(Array.isArray(parsed) ? parsed : parsed?.slides)
+    const mergedSlides = slides.length > 0 ? mergeRefinedSlidesWithBase(baseSlides, slides) : baseSlides
+    return enforceSlideCitationPolicy(mergedSlides, citationPolicy, dossier.evidence || [])
+  } catch (error) {
+    console.warn('[artifacts] slide refinement skipped:', error?.message || error)
+    return enforceSlideCitationPolicy(baseSlides, citationPolicy, dossier.evidence || [])
+  }
 }
 
 export default async function handler(req, res) {
@@ -309,7 +431,8 @@ export default async function handler(req, res) {
   }
 
   const mode = cleanText(body?.mode || 'both').toLowerCase()
-  const topic = cleanText(body?.topic || '').slice(0, 200)
+  const brief = normalizeBrief(body?.brief && typeof body.brief === 'object' ? body.brief : {})
+  const topic = cleanText(body?.topic || brief.overview || '').slice(0, 200)
   const instructions = cleanText(body?.instructions || '').slice(0, 1000)
   const audience = cleanText(body?.audience || '').slice(0, 200)
   const reportCitationMode = normalizeCitationControl(body?.reportCitationMode)
@@ -320,17 +443,39 @@ export default async function handler(req, res) {
   const slideStylePreset = normalizeStylePreset(body?.slideStylePreset)
   const consensus = String(body?.consensus || '').slice(0, 4000)
   const messages = sanitizeMessages(body?.messages)
+  const syntheticMessages = (!body?.dossier && messages.length === 0 && topic)
+    ? buildBriefMessages({ topic, instructions, audience, brief, mode })
+    : []
+  const workingMessages = messages.length > 0 ? messages : syntheticMessages
+  const workingConsensus = consensus || ((!body?.dossier && topic)
+    ? buildBriefConsensus({ topic, instructions, audience, brief, mode })
+    : '')
 
-  if (!body?.dossier && messages.length === 0 && !consensus) {
-    return sendJson(res, 400, { error: '문서/PPT 생성에는 기존 토론 결과나 Dossier가 필요합니다.' })
+  if (!body?.dossier && !topic) {
+    return sendJson(res, 400, { error: '문서/PPT 생성을 위해 주제 개요 또는 Dossier가 필요합니다.' })
   }
 
   try {
-    const dossier = buildWorkingDossier({ body, topic, messages, consensus })
+    const dossier = buildWorkingDossier({ body, topic, messages: workingMessages, consensus: workingConsensus })
+    dossier.brief = brief
     const customization = {
       audience,
       reportRequest: mode === 'docs' || mode === 'both' ? instructions : '',
       slideRequest: mode === 'ppt' || mode === 'both' ? instructions : '',
+      briefDomain: brief.domainLabel || brief.domain,
+      visualTheme: brief.visualTheme,
+      visualPreset: brief.visualPreset,
+      textDensity: brief.textDensity,
+      aiImageMode: brief.aiImageMode,
+      imageSource: brief.imageSource,
+      imageStylePreset: brief.imageStylePreset,
+      cardCount: brief.cardCount,
+      layoutPreset: brief.layoutPreset,
+      language: brief.language,
+      writingNote: brief.writingNote,
+      toneNote: brief.toneNote,
+      reportOutlineTitles: mode === 'docs' || mode === 'both' ? brief.outlineTitles : [],
+      slideOutlineTitles: mode === 'ppt' || mode === 'both' ? brief.outlineTitles : [],
       reportCitationMode: mode === 'docs' || mode === 'both' ? reportCitationMode : '',
       reportCitationVisibility: mode === 'docs' || mode === 'both' ? reportCitationVisibility : '',
       reportStylePreset: mode === 'docs' || mode === 'both' ? reportStylePreset : '',

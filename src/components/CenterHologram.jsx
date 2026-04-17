@@ -1,9 +1,22 @@
 import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Html, Ring, Torus } from '@react-three/drei'
-import * as THREE from 'three'
+import { Html, Torus } from '@react-three/drei'
 
-export default function CenterHologram({ topic, isActive }) {
+const MODE_LABELS = {
+  home: 'COUNCIL CHAMBER',
+  docs: 'DOCUMENT STUDIO',
+  ppt: 'DECK STUDIO',
+  debate: 'DEBATE LAB',
+}
+
+const MODE_COLORS = {
+  home: '#334466',
+  docs: '#22d3ee',
+  ppt: '#60a5fa',
+  debate: '#f59e0b',
+}
+
+export default function CenterHologram({ topic, isActive, mode = 'home', subtitle = '', outline = [] }) {
   const ringRef1 = useRef()
   const ringRef2 = useRef()
   const ringRef3 = useRef()
@@ -32,8 +45,11 @@ export default function CenterHologram({ topic, isActive }) {
     }
   })
 
+  const normalizedMode = MODE_LABELS[mode] ? mode : 'home'
   const opacity = isActive ? 0.6 : 0.15
-  const color = isActive ? '#00aaff' : '#334466'
+  const color = isActive ? MODE_COLORS[normalizedMode] || '#00aaff' : '#334466'
+  const titleLabel = normalizedMode === 'debate' ? 'DEBATE TOPIC' : MODE_LABELS[normalizedMode]
+  const visibleOutline = Array.isArray(outline) ? outline.slice(0, 3) : []
 
   return (
     <group position={[0, 0, 0]}>
@@ -58,26 +74,25 @@ export default function CenterHologram({ topic, isActive }) {
         <meshBasicMaterial color={color} transparent opacity={opacity * 0.5} />
       </Torus>
 
-      {/* 토론 주제 텍스트 (활성 상태) */}
-      {isActive && topic && (
+      {isActive && (topic || subtitle || visibleOutline.length > 0) && (
         <Html position={[0, 0, 0]} center style={{ pointerEvents: 'none' }}>
           <div
             style={{
               textAlign: 'center',
-              maxWidth: '320px',
-              width: '320px',
+              maxWidth: '360px',
+              width: '360px',
             }}
           >
             <div
               style={{
                 fontFamily: 'Orbitron, sans-serif',
                 fontSize: '9px',
-                color: 'rgba(100, 200, 255, 0.6)',
+                color: 'rgba(191, 248, 255, 0.75)',
                 letterSpacing: '0.2em',
                 marginBottom: '6px',
               }}
             >
-              DEBATE TOPIC
+              {titleLabel}
             </div>
             <div
               style={{
@@ -95,13 +110,50 @@ export default function CenterHologram({ topic, isActive }) {
                 overflow: 'hidden',
               }}
             >
-              {topic}
+              {topic || MODE_LABELS[normalizedMode]}
             </div>
+            {subtitle && (
+              <div
+                style={{
+                  marginTop: '8px',
+                  fontFamily: 'Rajdhani, sans-serif',
+                  fontSize: '11px',
+                  color: 'rgba(226, 232, 240, 0.72)',
+                  lineHeight: 1.35,
+                }}
+              >
+                {subtitle}
+              </div>
+            )}
+            {visibleOutline.length > 0 && normalizedMode !== 'debate' && (
+              <div
+                style={{
+                  marginTop: '10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  alignItems: 'center',
+                }}
+              >
+                {visibleOutline.map((item, index) => (
+                  <div
+                    key={`${item}-${index}`}
+                    style={{
+                      fontFamily: 'Orbitron, sans-serif',
+                      fontSize: '8px',
+                      color: 'rgba(191, 248, 255, 0.66)',
+                      letterSpacing: '0.08em',
+                    }}
+                  >
+                    {`${index + 1}. ${item}`}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Html>
       )}
 
-      {/* 비활성 상태 - 대기 텍스트 */}
       {!isActive && (
         <Html position={[0, 0, 0]} center style={{ pointerEvents: 'none' }}>
           <div

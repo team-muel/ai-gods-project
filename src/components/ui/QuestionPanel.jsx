@@ -1,165 +1,653 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDiscussionStore } from '../../store/discussionStore';
-import { downloadBlobResult, exportWorkbenchArtifact, generateAutonomousTopics, generateWorkbenchArtifacts, getGoogleExportStatus, startGoogleOAuth, submitArtifactFeedback } from '../../services/workbenchService';
+import { useWorkbenchStore } from '../../store/workbenchStore';
+import {
+  downloadBlobResult,
+  exportWorkbenchArtifact,
+  generateAutonomousTopics,
+  generateWorkbenchArtifacts,
+  getGoogleExportStatus,
+  startGoogleOAuth,
+  submitArtifactFeedback,
+} from '../../services/workbenchService';
 import { extractVideoId, fetchTranscript, isYoutubeUrl } from '../../services/youtubeService';
 
-const TAB_BUTTONS = [
-  { id: 'debate', label: '토론' },
-  { id: 'docs', label: '보고서' },
-  { id: 'ppt', label: 'PPT' },
-]
+const MODE_CARDS = [
+  {
+    id: 'docs',
+    label: '문서 만들기',
+    eyebrow: 'DOCUMENT STUDIO',
+    accent: '#67e8f9',
+    description: '브리프를 바탕으로 과제형 문서, 전략 메모, 분석 보고서를 바로 설계합니다.',
+  },
+  {
+    id: 'ppt',
+    label: 'PPT 만들기',
+    eyebrow: 'DECK STUDIO',
+    accent: '#93c5fd',
+    description: '청중과 설득 목적에 맞춘 deck 구조를 먼저 설계하고 슬라이드로 전개합니다.',
+  },
+  {
+    id: 'debate',
+    label: '토론 실험실',
+    eyebrow: 'DEBATE LAB',
+    accent: '#f59e0b',
+    description: '학습용 토론과 인사이트 수집을 위한 별도 실험실입니다. 문서/PPT의 필수 선행 단계가 아닙니다.',
+  },
+];
 
-const CITATION_MODE_OPTIONS = [
-  { value: 'auto', label: '자동' },
-  { value: 'none', label: '없음' },
-  { value: 'light', label: '약하게' },
-  { value: 'selective', label: '선택적' },
-  { value: 'strict', label: '엄격' },
-]
+const THEME_OPTIONS = [
+  { id: 'business', label: 'Business', note: '임원 보고, 전략 문서, 투자자용 정돈된 톤' },
+  { id: 'editorial', label: 'Editorial', note: '해석과 논지를 앞세운 읽기 좋은 구성' },
+  { id: 'academic', label: 'Academic', note: '과제물, 연구 발표, 근거 중심 구조' },
+  { id: 'pitch', label: 'Bold Pitch', note: '짧고 강한 메시지, 설득 우선 전개' },
+  { id: 'minimal-research', label: 'Minimal Research', note: '차분하고 정제된 리서치 표현' },
+];
 
-const CITATION_VISIBILITY_OPTIONS = [
-  { value: 'auto', label: '자동' },
-  { value: 'hidden', label: '숨김' },
-  { value: 'bibliography-only', label: '참고문헌만' },
-  { value: 'inline', label: '본문 표시' },
-]
+const TEXT_DENSITY_OPTIONS = [
+  { id: 'light', label: '짧게', note: '한 페이지나 한 장에 메시지를 선명하게 압축' },
+  { id: 'balanced', label: '보통', note: '설명과 압축의 균형을 유지' },
+  { id: 'dense', label: '많이', note: '배경과 설명을 충분히 포함' },
+];
 
-const CITATION_PRESETS = {
-  docs: [
-    { id: 'auto', label: '자동', mode: 'auto', visibility: 'auto', hint: '요청문을 보고 인용 강도와 노출 방식을 추론합니다.' },
-    { id: 'research', label: '연구형', mode: 'strict', visibility: 'inline', hint: '문헌 검토나 연구 보고서처럼 본문 citation을 강하게 유지합니다.' },
-    { id: 'analysis', label: '분석형', mode: 'selective', visibility: 'inline', hint: '핵심 분석 파트만 inline citation을 남기고 나머지는 간결하게 정리합니다.' },
-    { id: 'brief', label: '브리프형', mode: 'light', visibility: 'bibliography-only', hint: '본문은 깔끔하게 두고 참고문헌만 끝에 모읍니다.' },
-    { id: 'ideation', label: '아이데이션', mode: 'none', visibility: 'hidden', hint: '메시지와 구조가 우선인 초안에 맞춰 citation을 숨깁니다.' },
-  ],
-  ppt: [
-    { id: 'auto', label: '자동', mode: 'auto', visibility: 'auto', hint: '슬라이드 요청문을 보고 인용 방식을 추론합니다.' },
-    { id: 'investor', label: '투자자 deck', mode: 'light', visibility: 'bibliography-only', hint: '슬라이드 본문은 간결하게 유지하고 마지막 장에 참고자료를 모읍니다.' },
-    { id: 'evidence', label: '근거형', mode: 'selective', visibility: 'inline', hint: '근거가 필요한 슬라이드에만 citation을 남깁니다.' },
-    { id: 'research', label: '연구발표', mode: 'strict', visibility: 'inline', hint: '연구 발표처럼 슬라이드별 출처 표시를 적극적으로 유지합니다.' },
-    { id: 'pitch', label: '피치형', mode: 'none', visibility: 'hidden', hint: '메시지 전달력을 우선해 citation을 숨깁니다.' },
-  ],
-}
+const AI_IMAGE_OPTIONS = [
+  { id: 'off', label: '사용 안 함', note: '텍스트, 수치, 도식 중심으로 구성' },
+  { id: 'support', label: '보조 사용', note: '핵심 장면에만 이미지나 visual cue 사용' },
+  { id: 'hero', label: '많이 사용', note: '장표마다 강한 시각적 분위기를 적극 반영' },
+];
 
-const findCitationPreset = (presets = [], mode = 'auto', visibility = 'auto') => (
-  presets.find((preset) => preset.mode === mode && preset.visibility === visibility) || null
-)
+const CARD_COUNT_OPTIONS = [4, 6, 8, 10];
 
-const citationFieldLabelStyle = {
-  display: 'block',
-  marginBottom: '5px',
-  fontFamily: 'Orbitron, sans-serif',
-  fontSize: '8px',
-  color: 'rgba(191, 248, 255, 0.78)',
-  letterSpacing: '0.12em',
-}
+const LAYOUT_PRESET_OPTIONS = [
+  { id: 'basic', label: '기본', note: '균형 잡힌 일반 작업물 구조' },
+  { id: 'story', label: '서사형', note: '도입과 전개 흐름을 강조' },
+  { id: 'grid', label: '카드형', note: '카드 단위 핵심 메시지를 분명하게 분리' },
+];
 
-const citationSelectStyle = {
-  width: '100%',
-  padding: '10px 12px',
-  borderRadius: '8px',
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(148, 163, 184, 0.2)',
-  color: 'white',
-  fontSize: '12px',
-  outline: 'none',
-}
+const LANGUAGE_OPTIONS = [
+  { id: 'ko', label: '한국어' },
+  { id: 'en', label: 'English' },
+  { id: 'ko-en', label: '한영 병기' },
+];
 
-const citationHintStyle = {
-  marginBottom: '10px',
-  fontFamily: 'Rajdhani, sans-serif',
-  fontSize: '11px',
-  color: 'rgba(191, 219, 254, 0.78)',
-  lineHeight: 1.35,
-}
+const VISUAL_PRESET_OPTIONS = [
+  {
+    id: 'bee-happy',
+    label: 'Bee Happy',
+    frameBackground: 'linear-gradient(180deg, #111827 0%, #1f2937 100%)',
+    cardBackground: 'rgba(31, 41, 55, 0.94)',
+    titleColor: '#facc15',
+    bodyColor: 'rgba(255, 255, 255, 0.9)',
+    cardBorder: '1px solid rgba(250, 204, 21, 0.14)',
+  },
+  {
+    id: 'clementa',
+    label: 'Clementa',
+    frameBackground: 'linear-gradient(180deg, #eadac2 0%, #f4e6cf 100%)',
+    cardBackground: 'rgba(255, 248, 235, 0.96)',
+    titleColor: '#7c3f2c',
+    bodyColor: 'rgba(84, 55, 36, 0.88)',
+    cardBorder: '1px solid rgba(124, 63, 44, 0.12)',
+  },
+  {
+    id: 'stardust',
+    label: 'Stardust',
+    frameBackground: 'linear-gradient(180deg, #020617 0%, #111827 100%)',
+    cardBackground: 'rgba(2, 6, 23, 0.92)',
+    titleColor: '#f8fafc',
+    bodyColor: 'rgba(226, 232, 240, 0.84)',
+    cardBorder: '1px solid rgba(148, 163, 184, 0.18)',
+  },
+  {
+    id: 'seafoam',
+    label: 'Seafoam',
+    frameBackground: 'linear-gradient(180deg, #d1fae5 0%, #cffafe 100%)',
+    cardBackground: 'rgba(255, 255, 255, 0.94)',
+    titleColor: '#1e3a8a',
+    bodyColor: 'rgba(51, 65, 85, 0.88)',
+    cardBorder: '1px solid rgba(30, 64, 175, 0.12)',
+  },
+  {
+    id: 'aurum',
+    label: 'Aurum',
+    frameBackground: 'linear-gradient(135deg, #0f172a 0%, #1f2937 60%, #b45309 100%)',
+    cardBackground: 'rgba(17, 24, 39, 0.94)',
+    titleColor: '#fcd34d',
+    bodyColor: 'rgba(255, 255, 255, 0.9)',
+    cardBorder: '1px solid rgba(245, 158, 11, 0.18)',
+  },
+  {
+    id: 'terracotta',
+    label: 'Terracotta',
+    frameBackground: 'linear-gradient(180deg, #f5e7e0 0%, #f8ede8 100%)',
+    cardBackground: 'rgba(255, 255, 255, 0.95)',
+    titleColor: '#7f1d1d',
+    bodyColor: 'rgba(87, 35, 35, 0.84)',
+    cardBorder: '1px solid rgba(127, 29, 29, 0.12)',
+  },
+];
 
-const citationPresetRowStyle = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px',
-  marginBottom: '8px',
-}
+const IMAGE_SOURCE_OPTIONS = [
+  { id: 'ai', label: 'AI 이미지', note: '생성 이미지를 우선 사용' },
+  { id: 'reference', label: '참조 이미지', note: '레퍼런스 톤을 우선 유지' },
+  { id: 'hybrid', label: '혼합', note: '필요한 카드에만 시각 보강' },
+];
 
-const buildCitationPresetButtonStyle = (active) => ({
-  padding: '7px 9px',
+const IMAGE_STYLE_PRESET_OPTIONS = [
+  { id: 'isometric', label: '아이소메트릭', background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)' },
+  { id: 'bold-poster', label: '대담한 포스터', background: 'linear-gradient(135deg, #1e3a8a 0%, #ef4444 100%)' },
+  { id: 'narrative', label: '내러티브', background: 'linear-gradient(135deg, #082f49 0%, #38bdf8 100%)' },
+  { id: 'photo-real', label: '정물 사진', background: 'linear-gradient(135deg, #e7e5e4 0%, #c4b5fd 100%)' },
+  { id: 'watercolor', label: '깔끔한 수채화', background: 'linear-gradient(135deg, #ecfccb 0%, #fef3c7 100%)' },
+  { id: 'user-directed', label: '사용자 지정', background: 'linear-gradient(135deg, #e5e7eb 0%, #cbd5e1 100%)' },
+];
+
+const DEBATE_USAGE_OPTIONS = [
+  { id: 'off', label: '사용 안 함', note: '브리프와 구조만으로 결과물을 설계' },
+  { id: 'auto', label: '자동 참조', note: '토론이 있으면 필요한 부분만 보조적으로 사용' },
+  { id: 'strong', label: '강하게 참조', note: '기존 토론 인사이트를 적극 반영' },
+];
+
+const DOMAIN_LIBRARY = [
+  {
+    id: 'it',
+    label: 'IT',
+    note: 'AI, SaaS, 플랫폼, 제품 전략',
+    docs: [
+      { title: 'AI 에이전트 운영체제 시장의 2026 경쟁 구도를 경영진 보고서로 정리', audience: '경영진', theme: 'business', textDensity: 'balanced' },
+      { title: '멀티모달 LLM의 기업 적용 사례를 대학 과제형 문서로 정리', audience: '교수 / 심사자', theme: 'academic', textDensity: 'dense' },
+      { title: 'B2B SaaS에 AI copilots를 붙일 때의 제품 전략을 분석 메모로 작성', audience: '제품팀 / 전략팀', theme: 'editorial', textDensity: 'balanced' },
+    ],
+    ppt: [
+      { title: 'AI 에이전트 시장의 투자 포인트를 투자자 deck으로 정리', audience: '투자자', theme: 'pitch', textDensity: 'light' },
+      { title: '멀티모달 AI 도입 로드맵을 사내 경영진 발표자료로 구성', audience: '경영진', theme: 'business', textDensity: 'balanced' },
+      { title: '오픈소스 LLM 서빙 전략을 연구발표형 슬라이드로 설명', audience: '기술 세미나 청중', theme: 'academic', textDensity: 'dense' },
+    ],
+  },
+  {
+    id: 'economics',
+    label: '경제학',
+    note: '시장 구조, 노동, 생산성, 수익모델',
+    docs: [
+      { title: '구독경제와 AI SaaS의 수익모델을 경영진 브리프로 정리', audience: '경영진', theme: 'business', textDensity: 'balanced' },
+      { title: '생성형 AI 확산이 노동시장 생산성에 미치는 영향을 대학 과제 형식으로 작성', audience: '교수 / 심사자', theme: 'academic', textDensity: 'dense' },
+      { title: 'AI 투자 붐이 스타트업 자본 조달 환경을 어떻게 바꾸는지 해석형 문서로 정리', audience: '전략팀', theme: 'editorial', textDensity: 'balanced' },
+    ],
+    ppt: [
+      { title: 'AI 생산성 도입의 경제적 파급효과를 경영진 발표자료로 요약', audience: '경영진', theme: 'business', textDensity: 'light' },
+      { title: '구독형 AI 서비스의 unit economics를 투자자용 deck으로 구성', audience: '투자자', theme: 'pitch', textDensity: 'light' },
+      { title: '행동경제학 관점에서 AI 추천시스템의 소비자 반응을 연구 발표 자료로 작성', audience: '세미나 청중', theme: 'academic', textDensity: 'dense' },
+    ],
+  },
+  {
+    id: 'sociology',
+    label: '사회학',
+    note: '사회 구조, 신뢰, 제도, 플랫폼',
+    docs: [
+      { title: 'AI 감시기술이 사회적 신뢰에 미치는 영향을 비판적 보고서로 작성', audience: '교수 / 심사자', theme: 'academic', textDensity: 'dense' },
+      { title: '플랫폼 노동과 알고리즘 관리 문제를 사회학적 분석 메모로 정리', audience: '정책팀', theme: 'editorial', textDensity: 'balanced' },
+      { title: '생성형 AI가 창작자 정체성에 주는 영향을 인사이트 리포트로 구성', audience: '콘텐츠 전략팀', theme: 'business', textDensity: 'balanced' },
+    ],
+    ppt: [
+      { title: '플랫폼 알고리즘이 노동자 통제에 미치는 영향을 발표자료로 구성', audience: '강연 청중', theme: 'editorial', textDensity: 'balanced' },
+      { title: 'AI 감시기술의 사회적 비용을 정책 제안 deck으로 설명', audience: '정책 담당자', theme: 'business', textDensity: 'light' },
+      { title: '디지털 사회에서 신뢰 붕괴와 회복 메커니즘을 연구 발표형 슬라이드로 작성', audience: '학술 세미나', theme: 'academic', textDensity: 'dense' },
+    ],
+  },
+  {
+    id: 'humanities',
+    label: '인문학',
+    note: '철학, 인간성, 윤리, 역사적 해석',
+    docs: [
+      { title: '생성형 AI와 저자성 개념의 변화를 인문학 과제 형식으로 작성', audience: '교수 / 심사자', theme: 'academic', textDensity: 'dense' },
+      { title: '기술 발전과 인간성 문제를 비평 에세이형 문서로 정리', audience: '일반 독자', theme: 'editorial', textDensity: 'balanced' },
+      { title: 'AI 윤리 논쟁을 역사적 전환점과 연결한 해설 보고서로 구성', audience: '교육 콘텐츠 기획자', theme: 'minimal-research', textDensity: 'balanced' },
+    ],
+    ppt: [
+      { title: '생성형 AI와 인간 창의성 논쟁을 인문학 발표자료로 설명', audience: '강연 청중', theme: 'editorial', textDensity: 'balanced' },
+      { title: '기술윤리와 책임 문제를 학부 발표용 슬라이드로 구성', audience: '학부 발표 청중', theme: 'academic', textDensity: 'balanced' },
+      { title: 'AI 시대 인간성의 의미를 설득형 keynote deck으로 정리', audience: '컨퍼런스 청중', theme: 'pitch', textDensity: 'light' },
+    ],
+  },
+  {
+    id: 'physics',
+    label: '물리학',
+    note: '과학 개론, 기술 상용화, 연구 배경',
+    docs: [
+      { title: '양자컴퓨팅 상용화의 현실적 장벽을 개론 보고서로 정리', audience: '비전공 경영진', theme: 'minimal-research', textDensity: 'balanced' },
+      { title: '핵융합 에너지의 최근 연구 동향을 대학 과제형 문서로 작성', audience: '교수 / 심사자', theme: 'academic', textDensity: 'dense' },
+      { title: '우주산업에서 고체 물리 기반 기술이 사업화되는 경로를 해설형 문서로 정리', audience: '전략팀', theme: 'editorial', textDensity: 'balanced' },
+    ],
+    ppt: [
+      { title: '양자컴퓨팅의 현재와 한계를 비전공자용 발표자료로 설명', audience: '비전공자', theme: 'business', textDensity: 'light' },
+      { title: '핵융합 연구의 기술적 병목을 연구 발표형 deck으로 구성', audience: '세미나 청중', theme: 'academic', textDensity: 'dense' },
+      { title: '우주산업 기술의 상업적 가능성을 투자자용 슬라이드로 요약', audience: '투자자', theme: 'pitch', textDensity: 'light' },
+    ],
+  },
+  {
+    id: 'other',
+    label: '기타',
+    note: '자유 주제, 융합형 프로젝트',
+    docs: [
+      { title: '사용자 정의 주제를 구조화된 전략 문서로 정리', audience: '원하는 독자층', theme: 'business', textDensity: 'balanced' },
+      { title: '융합 주제를 학술형 보고서로 정리', audience: '교수 / 심사자', theme: 'academic', textDensity: 'dense' },
+      { title: '하나의 메시지를 해석형 에세이 문서로 구성', audience: '일반 독자', theme: 'editorial', textDensity: 'balanced' },
+    ],
+    ppt: [
+      { title: '사용자 정의 주제를 발표용 deck으로 빠르게 구성', audience: '원하는 청중', theme: 'business', textDensity: 'light' },
+      { title: '융합 프로젝트를 스토리형 pitch deck으로 정리', audience: '투자자 / 파트너', theme: 'pitch', textDensity: 'light' },
+      { title: '실험적 아이디어를 세미나 발표자료로 차분하게 설명', audience: '세미나 청중', theme: 'academic', textDensity: 'balanced' },
+    ],
+  },
+];
+
+const OUTLINE_PRESETS = {
+  docs: {
+    business: ['표지', 'Executive Summary', '배경과 맥락', '핵심 분석', '권고안', 'Appendix / Sources'],
+    editorial: ['표지', '핵심 질문', '맥락', '주요 해석', '쟁점과 의미', '참고자료'],
+    academic: ['표지', '문제 제기', '배경 / 선행연구', '핵심 분석', '결론 및 제언', '참고문헌'],
+    pitch: ['표지', '왜 지금', '문제 정의', '기회와 방향', '실행 포인트', '다음 단계'],
+    'minimal-research': ['표지', '연구 질문', '배경', '핵심 발견', '해석', '참고문헌'],
+  },
+  ppt: {
+    business: ['Cover', 'Why Now', '핵심 인사이트', 'Evidence', 'Recommendation', 'Next Step'],
+    editorial: ['Title', 'Question', 'Context', 'Interpretation', 'Tension', 'Takeaway'],
+    academic: ['Title', 'Research Question', 'Background', 'Findings', 'Discussion', 'References'],
+    pitch: ['Cover', 'Problem', 'Opportunity', 'Proof', 'Why Us', 'Ask'],
+    'minimal-research': ['Title', 'Question', 'Background', 'Insight', 'Implication', 'References'],
+  },
+};
+
+const DEFAULT_DOC_BRIEF = {
+  overview: '',
+  audience: '경영진',
+  domain: 'it',
+  theme: 'business',
+  visualPreset: 'bee-happy',
+  textDensity: 'balanced',
+  aiImageMode: 'support',
+  imageSource: 'ai',
+  imageStylePreset: 'bold-poster',
+  cardCount: 8,
+  layoutPreset: 'basic',
+  language: 'ko',
+  writingNote: '',
+  toneNote: '',
+  outlineTitles: [],
+  debateUsage: 'auto',
+};
+
+const DEFAULT_PPT_BRIEF = {
+  overview: '',
+  audience: '투자자 / 경영진',
+  domain: 'it',
+  theme: 'pitch',
+  visualPreset: 'stardust',
+  textDensity: 'light',
+  aiImageMode: 'hero',
+  imageSource: 'ai',
+  imageStylePreset: 'bold-poster',
+  cardCount: 6,
+  layoutPreset: 'grid',
+  language: 'ko',
+  writingNote: '',
+  toneNote: '',
+  outlineTitles: [],
+  debateUsage: 'auto',
+};
+
+const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
+
+const getDomainEntry = (domainId = 'other') => DOMAIN_LIBRARY.find((item) => item.id === domainId) || DOMAIN_LIBRARY[DOMAIN_LIBRARY.length - 1];
+const getThemeEntry = (themeId = 'business') => THEME_OPTIONS.find((item) => item.id === themeId) || THEME_OPTIONS[0];
+const getTextDensityEntry = (densityId = 'balanced') => TEXT_DENSITY_OPTIONS.find((item) => item.id === densityId) || TEXT_DENSITY_OPTIONS[1];
+const getAiImageEntry = (imageId = 'support') => AI_IMAGE_OPTIONS.find((item) => item.id === imageId) || AI_IMAGE_OPTIONS[1];
+const getLayoutPresetEntry = (layoutId = 'basic') => LAYOUT_PRESET_OPTIONS.find((item) => item.id === layoutId) || LAYOUT_PRESET_OPTIONS[0];
+const getLanguageEntry = (languageId = 'ko') => LANGUAGE_OPTIONS.find((item) => item.id === languageId) || LANGUAGE_OPTIONS[0];
+const getVisualPresetEntry = (presetId = 'bee-happy') => VISUAL_PRESET_OPTIONS.find((item) => item.id === presetId) || VISUAL_PRESET_OPTIONS[0];
+const getImageSourceEntry = (sourceId = 'ai') => IMAGE_SOURCE_OPTIONS.find((item) => item.id === sourceId) || IMAGE_SOURCE_OPTIONS[0];
+const getImageStylePresetEntry = (presetId = 'bold-poster') => IMAGE_STYLE_PRESET_OPTIONS.find((item) => item.id === presetId) || IMAGE_STYLE_PRESET_OPTIONS[0];
+
+const getCardCount = (value, fallback = 6) => {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.max(4, Math.min(10, parsed));
+};
+
+const buildOutlineTailTitles = (modeKey = 'docs', domainLabel = '일반') => (
+  modeKey === 'ppt'
+    ? [`${domainLabel} 사례`, '비교와 선택지', '실행 로드맵', '리스크', '마무리']
+    : [`${domainLabel} 사례`, '비교 분석', '리스크와 한계', '적용 시나리오', '참고자료']
+);
+
+const ensureOutlineCount = (items = [], targetCount = 6, { modeKey = 'docs', domainLabel = '일반' } = {}) => {
+  const safeItems = Array.isArray(items) ? items.filter(Boolean).slice(0, targetCount) : [];
+  const extras = buildOutlineTailTitles(modeKey, domainLabel);
+  const nextItems = [...safeItems];
+
+  while (nextItems.length < targetCount) {
+    const fallback = extras[nextItems.length - safeItems.length] || `${modeKey === 'ppt' ? '추가 슬라이드' : '추가 섹션'} ${nextItems.length + 1}`;
+    nextItems.push(fallback);
+  }
+
+  return nextItems.slice(0, targetCount);
+};
+
+const buildOutlinePreview = (mode, brief = {}) => {
+  const modeKey = mode === 'ppt' ? 'ppt' : 'docs';
+  const templateSet = OUTLINE_PRESETS[modeKey] || OUTLINE_PRESETS.docs;
+  const overview = cleanText(brief.overview);
+  const domainLabel = getDomainEntry(brief.domain).label;
+  const targetCount = getCardCount(brief.cardCount, modeKey === 'ppt' ? DEFAULT_PPT_BRIEF.cardCount : DEFAULT_DOC_BRIEF.cardCount);
+  const explicitOutline = ensureOutlineCount((Array.isArray(brief.outlineTitles) ? brief.outlineTitles : []).map((item) => cleanText(item)).filter(Boolean), targetCount, { modeKey, domainLabel });
+
+  if (Array.isArray(brief.outlineTitles) && brief.outlineTitles.filter((item) => cleanText(item)).length > 0) {
+    return explicitOutline;
+  }
+
+  const template = ensureOutlineCount(templateSet[brief.theme] || templateSet.business, targetCount, { modeKey, domainLabel });
+
+  if (!overview) return template;
+  if (modeKey === 'docs') {
+    return template.map((title, index) => {
+      if (index === 0) return overview.length > 28 ? '표지 / 주제' : overview;
+      if (index === 1 && title === 'Executive Summary') return `${domainLabel} 관점 요약`;
+      return title;
+    });
+  }
+
+  return template.map((title, index) => {
+    if (index === 0) return overview.length > 30 ? 'Cover / Topic' : overview;
+    if (index === 2 && title === '핵심 인사이트') return `${domainLabel} Insight`;
+    return title;
+  });
+};
+
+const buildModeSubtitle = (mode, brief = {}) => {
+  const domainLabel = getDomainEntry(brief.domain).label;
+  const themeLabel = getThemeEntry(brief.theme).label;
+  const densityLabel = getTextDensityEntry(brief.textDensity).label;
+  return `${domainLabel} · ${themeLabel} · 텍스트 ${densityLabel}`;
+};
+
+const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], hasDebateContext = false } = {}) => {
+  const modeLabel = mode === 'ppt' ? '발표자료' : '문서';
+  const domainEntry = getDomainEntry(brief.domain);
+  const themeEntry = getThemeEntry(brief.theme);
+  const densityEntry = getTextDensityEntry(brief.textDensity);
+  const aiImageEntry = getAiImageEntry(brief.aiImageMode);
+  const layoutPresetEntry = getLayoutPresetEntry(brief.layoutPreset);
+  const languageEntry = getLanguageEntry(brief.language);
+  const visualPresetEntry = getVisualPresetEntry(brief.visualPreset);
+  const imageSourceEntry = getImageSourceEntry(brief.imageSource);
+  const imageStyleEntry = getImageStylePresetEntry(brief.imageStylePreset);
+  const targetCount = getCardCount(brief.cardCount, mode === 'ppt' ? DEFAULT_PPT_BRIEF.cardCount : DEFAULT_DOC_BRIEF.cardCount);
+
+  return [
+    cleanText(brief.overview),
+    `형식: ${modeLabel}`,
+    `도메인: ${domainEntry.label}`,
+    `대상 독자: ${cleanText(brief.audience) || '일반 독자'}`,
+    `언어: ${languageEntry.label}`,
+    `카드 수: ${targetCount}`,
+    `레이아웃 모드: ${layoutPresetEntry.label} (${layoutPresetEntry.note})`,
+    `시각 테마: ${themeEntry.label} (${themeEntry.note})`,
+    `비주얼 프리셋: ${visualPresetEntry.label}`,
+    `텍스트 양: ${densityEntry.label} (${densityEntry.note})`,
+    `AI 이미지: ${aiImageEntry.label} (${aiImageEntry.note})`,
+    `이미지 출처: ${imageSourceEntry.label} (${imageSourceEntry.note})`,
+    `이미지 스타일: ${imageStyleEntry.label}`,
+    brief.writingNote ? `추가 작성 메모: ${cleanText(brief.writingNote)}` : '',
+    brief.toneNote ? `톤 메모: ${cleanText(brief.toneNote)}` : '',
+    outlineTitles.length > 0 ? `권장 윤곽선: ${outlineTitles.join(' -> ')}` : '',
+    brief.debateUsage === 'off'
+      ? '토론 내용은 기본 입력으로 사용하지 말고 브리프와 윤곽선만으로 결과물을 설계하세요.'
+      : brief.debateUsage === 'strong'
+        ? '기존 토론 인사이트가 있으면 적극 반영하되, 최종 결과물이 토론 요약처럼 보이지 않게 다시 설계하세요.'
+        : hasDebateContext
+          ? '기존 토론 인사이트가 있으면 필요한 부분만 보조 재료로 참조하세요.'
+          : '토론 인사이트가 없어도 브리프만으로 결과물을 설계하세요.',
+    mode === 'ppt'
+      ? (brief.aiImageMode === 'off'
+        ? '슬라이드는 텍스트, 수치, 도표 중심으로 설계하고 불필요한 이미지 지시를 줄이세요.'
+        : brief.aiImageMode === 'support'
+          ? '슬라이드마다 필요한 visual cue만 제안하고 headline-first 구조를 유지하세요.'
+          : '슬라이드별 hero visual 또는 supporting visual 컨셉을 분명히 제안하세요.')
+      : (brief.aiImageMode === 'off'
+        ? '문서는 문단과 구조 중심으로 작성하고 표, 도식 정도만 보조 요소로 간주하세요.'
+        : '문서는 핵심 섹션에서 도식, 표, 이미지 컨셉을 보조적으로 제안하세요.'),
+  ].filter(Boolean).join('\n');
+};
+
+const buildCitationOverrides = ({ mode, brief } = {}) => {
+  if (mode === 'docs') {
+    if (brief.theme === 'academic') return { reportCitationMode: 'strict', reportCitationVisibility: 'inline', reportStylePreset: 'research' };
+    if (brief.theme === 'pitch') return { reportCitationMode: 'none', reportCitationVisibility: 'hidden', reportStylePreset: 'ideation' };
+    if (brief.theme === 'business') return { reportCitationMode: 'light', reportCitationVisibility: 'bibliography-only', reportStylePreset: 'brief' };
+    return { reportCitationMode: 'selective', reportCitationVisibility: 'inline', reportStylePreset: 'analysis' };
+  }
+
+  if (brief.theme === 'academic') return { slideCitationMode: 'strict', slideCitationVisibility: 'inline', slideStylePreset: 'research' };
+  if (brief.theme === 'pitch') return { slideCitationMode: 'none', slideCitationVisibility: 'hidden', slideStylePreset: 'pitch' };
+  if (brief.theme === 'business') return { slideCitationMode: 'light', slideCitationVisibility: 'bibliography-only', slideStylePreset: 'investor' };
+  return { slideCitationMode: 'selective', slideCitationVisibility: 'inline', slideStylePreset: 'evidence' };
+};
+
+const buildPromptRecommendations = (mode, overview = '') => {
+  const normalizedOverview = cleanText(overview).toLowerCase();
+  const queryTokens = normalizedOverview.split(/\s+/).filter((token) => token.length >= 2);
+
+  const items = DOMAIN_LIBRARY.flatMap((domainEntry) => (
+    (domainEntry[mode] || []).map((example, index) => {
+      const searchable = [
+        domainEntry.label,
+        domainEntry.note,
+        example.title,
+        example.audience,
+        example.theme,
+      ].join(' ').toLowerCase();
+
+      const score = queryTokens.reduce((sum, token) => (searchable.includes(token) ? sum + 1 : sum), 0);
+
+      return {
+        ...example,
+        domainId: domainEntry.id,
+        domainLabel: domainEntry.label,
+        score,
+        index,
+      };
+    })
+  ));
+
+  if (queryTokens.length === 0) {
+    return DOMAIN_LIBRARY
+      .flatMap((domainEntry) => (domainEntry[mode] || []).slice(0, 1).map((example, index) => ({
+        ...example,
+        domainId: domainEntry.id,
+        domainLabel: domainEntry.label,
+        score: 0,
+        index,
+      })))
+      .slice(0, 6);
+  }
+
+  return items
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, 6);
+};
+
+const buildModeCardStyle = (active, accent = '#67e8f9') => ({
+  textAlign: 'left',
+  padding: '16px',
+  borderRadius: '16px',
+  border: `1px solid ${active ? accent : 'rgba(148, 163, 184, 0.18)'}`,
+  background: active
+    ? `linear-gradient(180deg, ${accent}22 0%, rgba(15, 23, 42, 0.86) 100%)`
+    : 'linear-gradient(180deg, rgba(15, 23, 42, 0.78) 0%, rgba(2, 6, 23, 0.9) 100%)',
+  cursor: 'pointer',
+  minHeight: '142px',
+  boxShadow: active ? `0 0 28px ${accent}22` : 'none',
+});
+
+const buildChipStyle = (active, palette = 'rgba(125, 211, 252, 0.38)') => ({
+  padding: '8px 11px',
   borderRadius: '999px',
-  border: `1px solid ${active ? 'rgba(125, 211, 252, 0.42)' : 'rgba(148, 163, 184, 0.2)'}`,
-  background: active ? 'rgba(8, 145, 178, 0.22)' : 'rgba(15, 23, 42, 0.64)',
-  color: active ? '#bff8ff' : 'rgba(226, 232, 240, 0.76)',
+  border: `1px solid ${active ? palette : 'rgba(148, 163, 184, 0.18)'}`,
+  background: active ? `${palette.replace('0.38', '0.18')}` : 'rgba(15, 23, 42, 0.74)',
+  color: active ? '#ecfeff' : 'rgba(226, 232, 240, 0.78)',
   fontFamily: 'Orbitron, sans-serif',
   fontSize: '9px',
   letterSpacing: '0.08em',
   cursor: 'pointer',
-})
+});
 
-const buildTabStyle = (active) => ({
-  flex: 1,
-  padding: '8px 6px',
-  borderRadius: '6px',
-  border: `1px solid ${active ? 'rgba(122, 244, 255, 0.38)' : 'rgba(148, 163, 184, 0.18)'}`,
-  background: active ? 'rgba(12, 74, 110, 0.42)' : 'rgba(15, 23, 42, 0.5)',
-  color: active ? '#bff8ff' : 'rgba(226, 232, 240, 0.72)',
-  fontFamily: 'Orbitron, sans-serif',
-  fontSize: '10px',
-  letterSpacing: '0.12em',
-  cursor: 'pointer',
-})
-
-const primaryButtonStyle = (disabled, palette = 'blue') => {
-  const palettes = {
-    blue: {
-      background: 'linear-gradient(135deg, #0f5fcc 0%, #1d9bf0 100%)',
-      border: '1px solid rgba(125, 211, 252, 0.25)',
-      color: '#eff6ff',
-    },
-    green: {
-      background: 'linear-gradient(135deg, #065f46 0%, #10b981 100%)',
-      border: '1px solid rgba(110, 231, 183, 0.25)',
-      color: '#ecfdf5',
-    },
-    amber: {
-      background: 'linear-gradient(135deg, #92400e 0%, #f59e0b 100%)',
-      border: '1px solid rgba(253, 230, 138, 0.25)',
-      color: '#fffbeb',
-    },
-  }
+const buildPrimaryButtonStyle = (disabled = false, palette = 'cyan') => {
+  const themes = {
+    cyan: 'linear-gradient(135deg, #0f5fcc 0%, #22d3ee 100%)',
+    green: 'linear-gradient(135deg, #0f766e 0%, #22c55e 100%)',
+    amber: 'linear-gradient(135deg, #b45309 0%, #f59e0b 100%)',
+  };
 
   return {
     width: '100%',
-    padding: '10px 12px',
-    borderRadius: '8px',
-    border: palettes[palette].border,
-    background: disabled ? 'rgba(51, 65, 85, 0.45)' : palettes[palette].background,
-    color: disabled ? 'rgba(226, 232, 240, 0.45)' : palettes[palette].color,
+    padding: '12px 14px',
+    borderRadius: '10px',
+    border: '1px solid rgba(125, 211, 252, 0.2)',
+    background: disabled ? 'rgba(51, 65, 85, 0.46)' : themes[palette],
+    color: disabled ? 'rgba(226, 232, 240, 0.46)' : '#eff6ff',
     fontSize: '12px',
-    fontWeight: 'bold',
+    fontWeight: 700,
     cursor: disabled ? 'not-allowed' : 'pointer',
-  }
-}
+  };
+};
 
 const secondaryButtonStyle = (disabled = false) => ({
   width: '100%',
-  padding: '9px 10px',
-  borderRadius: '8px',
-  border: '1px solid rgba(148, 163, 184, 0.2)',
+  padding: '10px 12px',
+  borderRadius: '10px',
+  border: '1px solid rgba(148, 163, 184, 0.18)',
   background: disabled ? 'rgba(30, 41, 59, 0.5)' : 'rgba(15, 23, 42, 0.72)',
   color: disabled ? 'rgba(148, 163, 184, 0.5)' : '#dbeafe',
   fontSize: '11px',
   cursor: disabled ? 'not-allowed' : 'pointer',
-})
+});
+
+const fieldLabelStyle = {
+  display: 'block',
+  marginBottom: '6px',
+  fontFamily: 'Orbitron, sans-serif',
+  fontSize: '9px',
+  color: 'rgba(191, 248, 255, 0.78)',
+  letterSpacing: '0.12em',
+};
+
+const inputStyle = {
+  width: '100%',
+  padding: '11px 12px',
+  background: 'rgba(255,255,255,0.04)',
+  border: '1px solid rgba(148, 163, 184, 0.18)',
+  borderRadius: '10px',
+  color: 'white',
+  fontSize: '13px',
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+
+const segmentedGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+  gap: '8px',
+};
+
+const advancedSectionStyle = {
+  border: '1px solid rgba(148, 163, 184, 0.14)',
+  borderRadius: '16px',
+  padding: '16px',
+  background: 'rgba(255, 255, 255, 0.9)',
+  boxShadow: '0 12px 32px rgba(15, 23, 42, 0.08)',
+};
+
+const advancedSectionLabelStyle = {
+  fontFamily: 'Orbitron, sans-serif',
+  fontSize: '10px',
+  color: '#1d4ed8',
+  letterSpacing: '0.12em',
+  marginBottom: '10px',
+};
+
+const advancedBodyTextStyle = {
+  fontFamily: 'Rajdhani, sans-serif',
+  fontSize: '13px',
+  color: 'rgba(15, 23, 42, 0.72)',
+  lineHeight: 1.45,
+};
+
+const advancedFieldLabelStyle = {
+  display: 'block',
+  marginBottom: '6px',
+  fontFamily: 'Rajdhani, sans-serif',
+  fontSize: '13px',
+  fontWeight: 700,
+  color: '#334155',
+};
+
+const advancedInputStyle = {
+  width: '100%',
+  padding: '10px 12px',
+  background: '#ffffff',
+  border: '1px solid rgba(191, 219, 254, 0.9)',
+  borderRadius: '12px',
+  color: '#0f172a',
+  fontSize: '14px',
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+
+const buildAdvancedChipStyle = (active, accent = '#2563eb') => ({
+  padding: '10px 12px',
+  borderRadius: '12px',
+  border: `1px solid ${active ? accent : 'rgba(148, 163, 184, 0.18)'}`,
+  background: active ? 'rgba(219, 234, 254, 0.9)' : '#ffffff',
+  color: active ? accent : '#475569',
+  fontFamily: 'Rajdhani, sans-serif',
+  fontSize: '13px',
+  fontWeight: active ? 700 : 600,
+  cursor: 'pointer',
+  textAlign: 'center',
+});
+
+const buildAdvancedTileStyle = (active) => ({
+  borderRadius: '14px',
+  border: `1px solid ${active ? 'rgba(37, 99, 235, 0.5)' : 'rgba(148, 163, 184, 0.18)'}`,
+  background: active ? 'rgba(239, 246, 255, 0.95)' : '#ffffff',
+  padding: '10px',
+  cursor: 'pointer',
+  boxShadow: active ? '0 0 0 2px rgba(59, 130, 246, 0.12)' : 'none',
+});
+
+const buildAdvancedActionButtonStyle = (primary = false, disabled = false) => ({
+  width: '100%',
+  padding: '11px 12px',
+  borderRadius: '12px',
+  border: primary ? '1px solid rgba(37, 99, 235, 0.25)' : '1px solid rgba(148, 163, 184, 0.18)',
+  background: disabled
+    ? 'rgba(226, 232, 240, 0.7)'
+    : primary
+      ? 'linear-gradient(135deg, #2563eb 0%, #38bdf8 100%)'
+      : '#ffffff',
+  color: disabled ? 'rgba(100, 116, 139, 0.8)' : primary ? '#eff6ff' : '#1e293b',
+  fontFamily: 'Rajdhani, sans-serif',
+  fontSize: '13px',
+  fontWeight: 700,
+  cursor: disabled ? 'not-allowed' : 'pointer',
+});
 
 export default function QuestionPanel({ onOpenDashboard }) {
-  const [activeTab, setActiveTab] = useState('debate');
+  const [docsBrief, setDocsBrief] = useState(DEFAULT_DOC_BRIEF);
+  const [pptBrief, setPptBrief] = useState(DEFAULT_PPT_BRIEF);
+  const [builderStage, setBuilderStage] = useState({ docs: 'overview', ppt: 'overview' });
   const [debateInput, setDebateInput] = useState('');
   const [focusInput, setFocusInput] = useState('');
-  const [docsRequest, setDocsRequest] = useState('');
-  const [docsAudience, setDocsAudience] = useState('경영진');
-  const [docsCitationMode, setDocsCitationMode] = useState('auto');
-  const [docsCitationVisibility, setDocsCitationVisibility] = useState('auto');
-  const [pptRequest, setPptRequest] = useState('');
-  const [pptAudience, setPptAudience] = useState('투자자/경영진');
-  const [pptCitationMode, setPptCitationMode] = useState('auto');
-  const [pptCitationVisibility, setPptCitationVisibility] = useState('auto');
   const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
   const [topicsLoading, setTopicsLoading] = useState(false);
   const [artifactBusy, setArtifactBusy] = useState({ docs: false, ppt: false, export: '', feedback: '' });
@@ -176,28 +664,38 @@ export default function QuestionPanel({ onOpenDashboard }) {
     statusText,
     clearDiscussion,
     consensus,
-    dossier,
-    artifacts,
-    topic,
+    topic: debateTopic,
     messages,
     debateId,
-    applyGeneratedOutput,
     setStatusText,
   } = useDiscussionStore();
 
-  const effectiveTopic = useMemo(() => debateInput.trim() || topic || dossier?.topic || '', [debateInput, dossier?.topic, topic]);
-  const isYT = isYoutubeUrl(debateInput);
+  const {
+    activeMode,
+    setActiveMode,
+    setPreview,
+    dossier,
+    artifacts,
+    outputSource,
+    debateSeedDossier,
+    applyGeneratedOutput,
+    clearGeneratedOutput,
+  } = useWorkbenchStore();
+
+  const docsOutlinePreview = useMemo(() => buildOutlinePreview('docs', docsBrief), [docsBrief]);
+  const pptOutlinePreview = useMemo(() => buildOutlinePreview('ppt', pptBrief), [pptBrief]);
+  const docsPromptRecommendations = useMemo(() => buildPromptRecommendations('docs', docsBrief.overview), [docsBrief.overview]);
+  const pptPromptRecommendations = useMemo(() => buildPromptRecommendations('ppt', pptBrief.overview), [pptBrief.overview]);
   const isLoading = isDiscussing || isFetchingTranscript;
-  const hasGenerationContext = Boolean(dossier || consensus || messages.length > 0);
+  const isYT = isYoutubeUrl(debateInput);
   const displayTotalRounds = Math.max(totalRounds || 0, 1);
   const progressWidth = Math.min(100, Math.max(0, (currentRound / displayTotalRounds) * 100));
-  const activeDocsCitationPreset = useMemo(
-    () => findCitationPreset(CITATION_PRESETS.docs, docsCitationMode, docsCitationVisibility),
-    [docsCitationMode, docsCitationVisibility],
-  );
-  const activePptCitationPreset = useMemo(
-    () => findCitationPreset(CITATION_PRESETS.ppt, pptCitationMode, pptCitationVisibility),
-    [pptCitationMode, pptCitationVisibility],
+  const effectiveTopic = cleanText(
+    activeMode === 'docs'
+      ? docsBrief.overview
+      : activeMode === 'ppt'
+        ? pptBrief.overview
+        : debateTopic || dossier?.topic || '',
   );
 
   useEffect(() => {
@@ -241,6 +739,145 @@ export default function QuestionPanel({ onOpenDashboard }) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (activeMode === 'docs') {
+      setPreview({
+        mode: 'docs',
+        title: cleanText(docsBrief.overview) || '문서 스튜디오',
+        subtitle: buildModeSubtitle('docs', docsBrief),
+        outline: docsOutlinePreview,
+        theme: docsBrief.theme,
+      });
+      return;
+    }
+
+    if (activeMode === 'ppt') {
+      setPreview({
+        mode: 'ppt',
+        title: cleanText(pptBrief.overview) || 'PPT 스튜디오',
+        subtitle: buildModeSubtitle('ppt', pptBrief),
+        outline: pptOutlinePreview,
+        theme: pptBrief.theme,
+      });
+      return;
+    }
+
+    if (activeMode === 'debate') {
+      setPreview({
+        mode: 'debate',
+        title: cleanText(debateInput) || '토론 실험실',
+        subtitle: cleanText(focusInput) || '내부 reasoning / 학습 인사이트용',
+        outline: ['주제 설정', '다중 에이전트 토론', '합의안 / 인사이트 저장'],
+        theme: 'debate',
+      });
+      return;
+    }
+
+    setPreview({
+      mode: 'home',
+      title: 'AI GODS STUDIO',
+      subtitle: '문서, PPT, 토론 실험실을 목적에 맞게 분리합니다.',
+      outline: ['문서 만들기', 'PPT 만들기', '토론 실험실'],
+      theme: 'business',
+    });
+  }, [activeMode, debateInput, docsBrief, docsOutlinePreview, focusInput, pptBrief, pptOutlinePreview, setPreview]);
+
+  const updateBrief = (mode, updates = {}) => {
+    if (mode === 'docs') {
+      setDocsBrief((state) => ({ ...state, ...updates }));
+      return;
+    }
+    setPptBrief((state) => ({ ...state, ...updates }));
+  };
+
+  const handleModeSelect = (mode) => {
+    setActiveMode(mode);
+    setPanelMessage('');
+    setTranscriptError('');
+    if (mode === 'docs') {
+      setBuilderStage((state) => ({ ...state, docs: 'overview' }));
+      setStatusText('문서 스튜디오 준비 완료');
+    }
+    else if (mode === 'ppt') {
+      setBuilderStage((state) => ({ ...state, ppt: 'overview' }));
+      setStatusText('PPT 스튜디오 준비 완료');
+    }
+    else if (mode === 'debate') setStatusText('토론 실험실 준비 완료');
+  };
+
+  const handleSelectExample = (mode, example = {}, domainId = 'other') => {
+    updateBrief(mode, {
+      overview: example.title || '',
+      audience: example.audience || (mode === 'docs' ? DEFAULT_DOC_BRIEF.audience : DEFAULT_PPT_BRIEF.audience),
+      theme: example.theme || (mode === 'docs' ? DEFAULT_DOC_BRIEF.theme : DEFAULT_PPT_BRIEF.theme),
+      textDensity: example.textDensity || 'balanced',
+      domain: domainId,
+      outlineTitles: [],
+    });
+    setPanelMessage(`${mode === 'docs' ? '문서' : 'PPT'} 브리프 예시를 채웠습니다. 필요한 부분만 수정해서 바로 생성할 수 있습니다.`);
+  };
+
+  const handleAdvanceBuilder = (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    if (!cleanText(brief.overview)) {
+      setPanelMessage('주제 개요를 먼저 입력하세요.');
+      return;
+    }
+
+    setBuilderStage((state) => ({ ...state, [mode]: 'details' }));
+    setPanelMessage(mode === 'docs' ? '개요를 바탕으로 문서 구조 설정 단계로 이동했습니다.' : '개요를 바탕으로 PPT 구조 설정 단계로 이동했습니다.');
+  };
+
+  const handleBackToOverview = (mode) => {
+    setBuilderStage((state) => ({ ...state, [mode]: 'overview' }));
+    setPanelMessage(mode === 'docs' ? '문서 개요 입력 단계로 돌아갔습니다.' : 'PPT 개요 입력 단계로 돌아갔습니다.');
+  };
+
+  const handleOpenAdvancedBuilder = (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    if (!cleanText(brief.overview)) {
+      setPanelMessage('주제 개요를 먼저 입력하세요.');
+      return;
+    }
+
+    setBuilderStage((state) => ({ ...state, [mode]: 'advanced' }));
+    setPanelMessage(mode === 'docs' ? '문서 고급 모드를 열었습니다.' : 'PPT 고급 모드를 열었습니다.');
+  };
+
+  const handleCloseAdvancedBuilder = (mode) => {
+    setBuilderStage((state) => ({ ...state, [mode]: 'details' }));
+    setPanelMessage(mode === 'docs' ? '문서 기본 설정 화면으로 돌아갔습니다.' : 'PPT 기본 설정 화면으로 돌아갔습니다.');
+  };
+
+  const handleOutlineTitleChange = (mode, index, value) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const resolvedOutline = buildOutlinePreview(mode, brief);
+    const nextOutline = [...resolvedOutline];
+    nextOutline[index] = value;
+    updateBrief(mode, { outlineTitles: nextOutline });
+  };
+
+  const handleAddOutlineItem = (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const resolvedOutline = buildOutlinePreview(mode, brief);
+    const nextLength = Math.min(resolvedOutline.length + 1, 12);
+    const nextOutline = [...resolvedOutline, mode === 'docs' ? `추가 섹션 ${resolvedOutline.length + 1}` : `추가 슬라이드 ${resolvedOutline.length + 1}`].slice(0, nextLength);
+    updateBrief(mode, { outlineTitles: nextOutline, cardCount: nextLength });
+  };
+
+  const handleRemoveOutlineItem = (mode, index) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const resolvedOutline = buildOutlinePreview(mode, brief);
+    const nextOutline = resolvedOutline.filter((_, itemIndex) => itemIndex !== index);
+    const nextCount = Math.max(4, nextOutline.length);
+    updateBrief(mode, { outlineTitles: nextOutline, cardCount: nextCount });
+  };
+
+  const handleResetAutoOutline = (mode) => {
+    updateBrief(mode, { outlineTitles: [] });
+    setPanelMessage(mode === 'docs' ? '문서 윤곽선을 자동 생성 상태로 되돌렸습니다.' : 'PPT 윤곽선을 자동 생성 상태로 되돌렸습니다.');
+  };
 
   const handleDebateSubmit = async (event) => {
     event.preventDefault();
@@ -290,54 +927,81 @@ export default function QuestionPanel({ onOpenDashboard }) {
   };
 
   const handleGenerateArtifact = async (mode) => {
-    if (artifactBusy[mode]) return;
-    if (!hasGenerationContext) {
-      setPanelMessage('먼저 토론을 진행해 Dossier를 확보하세요.');
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const outlineTitles = mode === 'docs' ? docsOutlinePreview : pptOutlinePreview;
+    const hasDebateContext = Boolean(debateSeedDossier || consensus || messages.length > 0);
+    const useDebateContext = brief.debateUsage !== 'off' && hasDebateContext;
+    const busyKey = mode === 'docs' ? 'docs' : 'ppt';
+
+    if (artifactBusy[busyKey]) return;
+    if (!cleanText(brief.overview)) {
+      setPanelMessage('주제 개요를 먼저 입력하세요.');
       return;
     }
 
-    const instructions = mode === 'docs' ? docsRequest : pptRequest;
-    const audience = mode === 'docs' ? docsAudience : pptAudience;
-    const citationOverrides = mode === 'docs'
-      ? {
-        reportCitationMode: docsCitationMode,
-        reportCitationVisibility: docsCitationVisibility,
-        reportStylePreset: activeDocsCitationPreset?.id || '',
-      }
-      : {
-        slideCitationMode: pptCitationMode,
-        slideCitationVisibility: pptCitationVisibility,
-        slideStylePreset: activePptCitationPreset?.id || '',
-      };
-
-    setArtifactBusy((state) => ({ ...state, [mode]: true }));
-    setStatusText(mode === 'docs' ? '보고서 초안 생성 중...' : '발표자료 초안 생성 중...');
+    setArtifactBusy((state) => ({ ...state, [busyKey]: true }));
+    setStatusText(mode === 'docs' ? '문서 초안 설계 중...' : 'PPT 구조 설계 중...');
     setPanelMessage('');
 
     try {
+      const instructions = buildGenerationInstructions({
+        mode,
+        brief,
+        outlineTitles,
+        hasDebateContext: useDebateContext,
+      });
+
       const data = await generateWorkbenchArtifacts({
         mode,
-        topic: effectiveTopic,
+        topic: cleanText(brief.overview),
         instructions,
-        audience,
-        dossier,
-        consensus,
-        messages,
+        audience: cleanText(brief.audience),
+        dossier: useDebateContext ? debateSeedDossier : null,
+        consensus: useDebateContext ? consensus : '',
+        messages: useDebateContext ? messages : [],
         artifacts,
-        ...citationOverrides,
+        brief: {
+          overview: cleanText(brief.overview),
+          domain: brief.domain,
+          domainLabel: getDomainEntry(brief.domain).label,
+          visualTheme: brief.theme,
+          visualPreset: brief.visualPreset,
+          textDensity: brief.textDensity,
+          aiImageMode: brief.aiImageMode,
+          imageSource: brief.imageSource,
+          imageStylePreset: brief.imageStylePreset,
+          cardCount: getCardCount(brief.cardCount, mode === 'docs' ? DEFAULT_DOC_BRIEF.cardCount : DEFAULT_PPT_BRIEF.cardCount),
+          layoutPreset: brief.layoutPreset,
+          language: brief.language,
+          writingNote: cleanText(brief.writingNote),
+          toneNote: cleanText(brief.toneNote),
+          debateUsage: brief.debateUsage,
+          outlineTitles,
+          mode,
+        },
+        ...buildCitationOverrides({ mode, brief }),
       });
 
       applyGeneratedOutput({
-        topic: data?.topic || effectiveTopic,
-        dossier: data?.dossier || dossier,
-        artifacts: data?.artifacts || artifacts,
-        statusText: mode === 'docs' ? '보고서 생성 완료' : 'PPT 초안 생성 완료',
+        topic: data?.topic || cleanText(brief.overview),
+        dossier: data?.dossier,
+        artifacts: data?.artifacts,
+        source: 'brief',
+        mode,
+        preview: {
+          mode,
+          title: cleanText(brief.overview),
+          subtitle: buildModeSubtitle(mode, brief),
+          outline: outlineTitles,
+          theme: brief.theme,
+        },
       });
-      setPanelMessage(mode === 'docs' ? '보고서 초안을 갱신했습니다.' : 'PPT 초안을 갱신했습니다.');
+
+      setPanelMessage(mode === 'docs' ? '브리프를 바탕으로 문서 초안을 생성했습니다.' : '브리프를 바탕으로 PPT 초안을 생성했습니다.');
     } catch (error) {
       setPanelMessage(error.message || '산출물 생성 실패');
     } finally {
-      setArtifactBusy((state) => ({ ...state, [mode]: false }));
+      setArtifactBusy((state) => ({ ...state, [busyKey]: false }));
     }
   };
 
@@ -403,7 +1067,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
           ? '피드백이 저장되었고 artifact 품질 신호로 학습 루프를 트리거했습니다.'
           : direction === 'up'
             ? '좋은 산출물 피드백을 저장했습니다.'
-            : '개선 필요 피드백을 저장했습니다.'
+            : '개선 필요 피드백을 저장했습니다.',
       );
     } catch (error) {
       setPanelMessage(error.message || '피드백 저장 실패');
@@ -412,361 +1076,753 @@ export default function QuestionPanel({ onOpenDashboard }) {
     }
   };
 
-  return (
-    <div style={{
-      position: 'absolute', top: '20px', left: '20px', zIndex: 100,
-      background: 'linear-gradient(180deg, rgba(2, 6, 23, 0.92) 0%, rgba(10, 18, 34, 0.88) 100%)',
-      backdropFilter: 'blur(16px)',
-      padding: '18px', borderRadius: '16px',
-      border: '1px solid rgba(125, 211, 252, 0.16)',
-      width: '360px',
-      maxHeight: '92vh',
-      overflowY: 'auto',
-      transition: 'border-color 0.3s',
-    }}>
-      <div style={{ marginBottom: '14px' }}>
-        <div style={{ color: '#c4f1ff', fontSize: '16px', marginBottom: '6px', fontFamily: 'Orbitron, monospace', letterSpacing: '0.14em' }}>
-          AI GODS WORKBENCH
-        </div>
-        <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.4 }}>
-          자율 주제 발굴, 토론 실행, Dossier 정리, Report/PPT 생성, export, 품질 피드백까지 한 패널에서 직접 처리합니다.
-        </div>
+  const renderHome = () => (
+    <div style={{ display: 'grid', gap: '12px' }}>
+      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: 'rgba(226, 232, 240, 0.76)', lineHeight: 1.45 }}>
+        결과물 생성은 토론의 하위 단계가 아니라 별도 Studio 흐름입니다. 먼저 무엇을 만들지 선택하세요.
       </div>
-
-      <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
-        {TAB_BUTTONS.map((tab) => (
-          <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} style={buildTabStyle(activeTab === tab.id)}>
-            {tab.label}
+      <div style={{ display: 'grid', gap: '10px' }}>
+        {MODE_CARDS.map((card) => (
+          <button key={card.id} type="button" onClick={() => handleModeSelect(card.id)} style={buildModeCardStyle(activeMode === card.id, card.accent)}>
+            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: card.accent, letterSpacing: '0.18em', marginBottom: '8px' }}>
+              {card.eyebrow}
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '18px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
+              {card.label}
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45 }}>
+              {card.description}
+            </div>
           </button>
         ))}
       </div>
+    </div>
+  );
 
-      {activeTab === 'debate' && (
-        <form onSubmit={handleDebateSubmit}>
-          <div style={{ marginBottom: '10px' }}>
-            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#7dd3fc', letterSpacing: '0.14em', marginBottom: '6px' }}>
-              AUTONOMOUS TOPIC DISCOVERY
+  const renderOutlinePreview = (mode, outlineTitles = [], theme = 'business') => {
+    const isDeck = mode === 'ppt';
+    const themeLabel = getThemeEntry(theme).label;
+
+    return (
+      <div style={{ border: '1px solid rgba(125, 211, 252, 0.14)', borderRadius: '14px', padding: '14px', background: 'rgba(2, 6, 23, 0.46)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
+          <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em' }}>
+            VISUAL OUTLINE
+          </div>
+          <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(191, 248, 255, 0.58)', letterSpacing: '0.08em' }}>
+            {themeLabel}
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: isDeck ? 'repeat(2, minmax(0, 1fr))' : '1fr', gap: '8px' }}>
+          {outlineTitles.map((title, index) => (
+            <div key={`${title}-${index}`} style={{ padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: isDeck ? 'rgba(15, 23, 42, 0.74)' : 'rgba(15, 23, 42, 0.56)' }}>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: 'rgba(125, 211, 252, 0.7)', letterSpacing: '0.12em', marginBottom: '4px' }}>
+                {isDeck ? `SLIDE ${index + 1}` : `SECTION ${index + 1}`}
+              </div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: '#e2e8f0', lineHeight: 1.35 }}>
+                {title}
+              </div>
             </div>
-            <input
-              value={focusInput}
-              onChange={(event) => setFocusInput(event.target.value)}
-              placeholder="예: 규제, AI agent, 제조, 헬스케어"
-              className="input-space"
-              style={{ width: '100%', marginBottom: '8px', borderRadius: '8px' }}
-            />
-            <button type="button" onClick={handleGenerateTopics} disabled={topicsLoading} style={secondaryButtonStyle(topicsLoading)}>
-              {topicsLoading ? '주제 후보 생성 중...' : '자율 주제 후보 만들기'}
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderAdvancedBuilder = (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const outlineTitles = mode === 'docs' ? docsOutlinePreview : pptOutlinePreview;
+    const domainEntry = getDomainEntry(brief.domain);
+    const promptRecommendations = (mode === 'docs' ? docsPromptRecommendations : pptPromptRecommendations).slice(0, 3);
+    const artifact = mode === 'docs' ? artifacts?.report : artifacts?.slides;
+    const busyKey = mode === 'docs' ? 'docs' : 'ppt';
+    const outputLabel = mode === 'docs' ? '문서' : 'PPT';
+    const hasDebateContext = Boolean(debateSeedDossier || consensus || messages.length > 0);
+    const visualPresetEntry = getVisualPresetEntry(brief.visualPreset);
+
+    return (
+      <div style={{ display: 'grid', gap: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: mode === 'docs' ? '#67e8f9' : '#93c5fd', letterSpacing: '0.16em', marginBottom: '6px' }}>
+              {mode === 'docs' ? 'DOCUMENT STUDIO' : 'DECK STUDIO'}
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '22px', fontWeight: 700, color: '#f8fafc', marginBottom: '6px' }}>
+              프롬프트 편집기 · 고급 모드
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: 'rgba(226, 232, 240, 0.74)', lineHeight: 1.5, maxWidth: '720px' }}>
+              카드 수, 레이아웃, 언어, 시각 프리셋, 이미지 스타일, 윤곽선을 한 번에 열어둔 편집 화면입니다. 여기서 조정한 내용이 바로 {outputLabel} 생성 지침으로 반영됩니다.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', minWidth: '320px' }}>
+            <button type="button" onClick={() => handleCloseAdvancedBuilder(mode)} style={secondaryButtonStyle(false)}>
+              기본 설정으로
+            </button>
+            <button type="button" onClick={() => handleBackToOverview(mode)} style={secondaryButtonStyle(false)}>
+              개요 수정
+            </button>
+            <button type="button" onClick={() => handleModeSelect('home')} style={secondaryButtonStyle(false)}>
+              시작 화면으로
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 320px) minmax(420px, 1fr) minmax(260px, 300px)', gap: '16px', alignItems: 'start' }}>
+          <div style={{ display: 'grid', gap: '14px' }}>
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>TEXT CONTENT</div>
+              <div style={{ ...advancedBodyTextStyle, marginBottom: '12px' }}>카드 수와 레이아웃, 언어, 텍스트 밀도를 한 번에 조정합니다.</div>
+
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div>
+                  <div style={advancedFieldLabelStyle}>카드 수</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
+                    {CARD_COUNT_OPTIONS.map((count) => (
+                      <button key={count} type="button" onClick={() => updateBrief(mode, { cardCount: count, outlineTitles: [] })} style={buildAdvancedChipStyle(getCardCount(brief.cardCount, 6) === count)}>
+                        {count}개
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>레이아웃 모드</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+                    {LAYOUT_PRESET_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { layoutPreset: item.id })} style={buildAdvancedChipStyle(brief.layoutPreset === item.id, '#0f766e')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ ...advancedBodyTextStyle, marginTop: '6px' }}>{getLayoutPresetEntry(brief.layoutPreset).note}</div>
+                </div>
+
+                <label>
+                  <span style={advancedFieldLabelStyle}>언어</span>
+                  <select value={brief.language} onChange={(event) => updateBrief(mode, { language: event.target.value })} style={advancedInputStyle}>
+                    {LANGUAGE_OPTIONS.map((item) => (
+                      <option key={item.id} value={item.id}>{item.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>카드당 텍스트 양</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+                    {TEXT_DENSITY_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { textDensity: item.id })} style={buildAdvancedChipStyle(brief.textDensity === item.id, '#2563eb')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ ...advancedBodyTextStyle, marginTop: '6px' }}>{getTextDensityEntry(brief.textDensity).note}</div>
+                </div>
+
+                <label>
+                  <span style={advancedFieldLabelStyle}>쓰기 내용</span>
+                  <textarea value={brief.writingNote} onChange={(event) => updateBrief(mode, { writingNote: event.target.value })} rows={3} placeholder="예: 3부에서 한국 공룡 화석 사례를 더 강조" style={{ ...advancedInputStyle, resize: 'vertical' }} />
+                </label>
+
+                <label>
+                  <span style={advancedFieldLabelStyle}>톤</span>
+                  <textarea value={brief.toneNote} onChange={(event) => updateBrief(mode, { toneNote: event.target.value })} rows={3} placeholder="예: 초등학생도 읽기 쉽게, 지나치게 학술적으로 쓰지 않기" style={{ ...advancedInputStyle, resize: 'vertical' }} />
+                </label>
+              </div>
+            </div>
+
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>BRIEF CONTEXT</div>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <label>
+                  <span style={advancedFieldLabelStyle}>{mode === 'docs' ? '독자 / 제출 대상' : '청중 / 발표 대상'}</span>
+                  <input value={brief.audience} onChange={(event) => updateBrief(mode, { audience: event.target.value })} style={advancedInputStyle} />
+                </label>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>도메인</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {DOMAIN_LIBRARY.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { domain: item.id, outlineTitles: [] })} style={buildAdvancedChipStyle(brief.domain === item.id, '#7c3aed')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ ...advancedBodyTextStyle, marginTop: '6px' }}>{domainEntry.note}</div>
+                </div>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>토론 인사이트 사용</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+                    {DEBATE_USAGE_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { debateUsage: item.id })} style={buildAdvancedChipStyle(brief.debateUsage === item.id, '#db2777')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ ...advancedBodyTextStyle, marginTop: '6px', color: hasDebateContext ? '#7c3aed' : 'rgba(15, 23, 42, 0.56)' }}>
+                    {hasDebateContext ? DEBATE_USAGE_OPTIONS.find((item) => item.id === brief.debateUsage)?.note : '현재 저장된 토론 seed가 없어도 브리프만으로 생성됩니다.'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>VISUAL ELEMENTS</div>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div>
+                  <div style={advancedFieldLabelStyle}>테마 방향</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
+                    {THEME_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { theme: item.id, outlineTitles: [] })} style={buildAdvancedChipStyle(brief.theme === item.id, '#0f766e')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>테마 프리셋</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
+                    {VISUAL_PRESET_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { visualPreset: item.id })} style={buildAdvancedTileStyle(brief.visualPreset === item.id)}>
+                        <div style={{ height: '96px', borderRadius: '10px', padding: '16px', background: item.frameBackground, boxSizing: 'border-box' }}>
+                          <div style={{ height: '100%', borderRadius: '16px', background: item.cardBackground, border: item.cardBorder, padding: '14px', boxSizing: 'border-box' }}>
+                            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: item.titleColor, marginBottom: '4px' }}>제목</div>
+                            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '11px', color: item.bodyColor }}>본문 및 링크</div>
+                          </div>
+                        </div>
+                        <div style={{ marginTop: '8px', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: '#334155', fontWeight: 600 }}>{item.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>이미지 사용 강도</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+                    {AI_IMAGE_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { aiImageMode: item.id })} style={buildAdvancedChipStyle(brief.aiImageMode === item.id, '#d97706')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>이미지 출처</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+                    {IMAGE_SOURCE_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { imageSource: item.id })} style={buildAdvancedChipStyle(brief.imageSource === item.id, '#2563eb')}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={advancedFieldLabelStyle}>이미지 스타일</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '10px' }}>
+                    {IMAGE_STYLE_PRESET_OPTIONS.map((item) => (
+                      <button key={item.id} type="button" onClick={() => updateBrief(mode, { imageStylePreset: item.id })} style={buildAdvancedTileStyle(brief.imageStylePreset === item.id)}>
+                        <div style={{ height: '74px', borderRadius: '10px', background: item.background, marginBottom: '8px' }} />
+                        <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#334155', fontWeight: 600 }}>{item.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '14px' }}>
+            <div style={advancedSectionStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                <div>
+                  <div style={advancedSectionLabelStyle}>PROMPT EDITOR</div>
+                  <div style={advancedBodyTextStyle}>카드별 제목을 직접 편집하고, 필요한 경우 카드를 추가하거나 자동 윤곽선으로 되돌릴 수 있습니다.</div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => handleResetAutoOutline(mode)} style={buildAdvancedActionButtonStyle(false, false)}>
+                    자동 윤곽선 복원
+                  </button>
+                  <button type="button" onClick={() => handleAddOutlineItem(mode)} disabled={outlineTitles.length >= 10} style={buildAdvancedActionButtonStyle(true, outlineTitles.length >= 10)}>
+                    카드 추가
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: '10px' }}>
+                {outlineTitles.map((title, index) => (
+                  <div key={`${title}-${index}`} style={{ display: 'grid', gridTemplateColumns: '56px 1fr auto', gap: '0', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(191, 219, 254, 0.9)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#eff6ff', fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#2563eb' }}>
+                      {index + 1}
+                    </div>
+                    <div style={{ background: '#ffffff', padding: '8px 10px' }}>
+                      <input
+                        value={title}
+                        onChange={(event) => handleOutlineTitleChange(mode, index, event.target.value)}
+                        style={{ ...advancedInputStyle, border: 'none', padding: '4px 0', fontWeight: 700 }}
+                      />
+                    </div>
+                    <button type="button" onClick={() => handleRemoveOutlineItem(mode, index)} disabled={outlineTitles.length <= 4} style={{ width: '52px', border: 'none', borderLeft: '1px solid rgba(191, 219, 254, 0.9)', background: '#ffffff', color: outlineTitles.length <= 4 ? 'rgba(148, 163, 184, 0.7)' : '#64748b', cursor: outlineTitles.length <= 4 ? 'not-allowed' : 'pointer' }}>
+                      -
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {renderOutlinePreview(mode, outlineTitles, brief.theme)}
+          </div>
+
+          <div style={{ display: 'grid', gap: '14px' }}>
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>TITLE AND BRIEF</div>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <label>
+                  <span style={advancedFieldLabelStyle}>제목 / 주제 개요</span>
+                  <textarea value={brief.overview} onChange={(event) => updateBrief(mode, { overview: event.target.value })} rows={5} style={{ ...advancedInputStyle, resize: 'vertical' }} />
+                </label>
+                <div style={{ padding: '12px', borderRadius: '12px', background: '#f8fafc', border: '1px solid rgba(226, 232, 240, 0.9)' }}>
+                  <div style={{ ...advancedBodyTextStyle, color: '#334155' }}>현재 프리셋 · {getThemeEntry(brief.theme).label} / {visualPresetEntry.label} / {getLanguageEntry(brief.language).label}</div>
+                  <div style={{ ...advancedBodyTextStyle, marginTop: '4px', color: '#475569' }}>{buildModeSubtitle(mode, brief)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>PROMPT EXAMPLES</div>
+              <div style={{ display: 'grid', gap: '8px' }}>
+                {promptRecommendations.map((example, index) => (
+                  <button key={`${example.title}-${index}`} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(191, 219, 254, 0.9)', background: '#ffffff', cursor: 'pointer' }}>
+                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#0f172a', marginBottom: '4px' }}>{example.title}</div>
+                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>{example.domainLabel} · {example.audience}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>GUIDE</div>
+              <div style={{ display: 'grid', gap: '8px' }}>
+                {[
+                  '소개 카드는 짧고 강하게, 중간 카드는 근거와 사례를 채우는 편이 안정적입니다.',
+                  '테마 프리셋은 화면 분위기, 시각 테마는 문서의 전개 방식에 더 가깝습니다.',
+                  '윤곽선 제목을 직접 고치면 그 순서를 우선해 생성합니다.',
+                ].map((item, index) => (
+                  <div key={`${item}-${index}`} style={{ padding: '10px 12px', borderRadius: '12px', background: '#eff6ff', color: '#334155', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', lineHeight: 1.45 }}>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={advancedSectionStyle}>
+              <div style={advancedSectionLabelStyle}>RUN</div>
+              <div style={{ display: 'grid', gap: '8px' }}>
+                <button type="button" onClick={() => handleGenerateArtifact(mode)} disabled={artifactBusy[busyKey]} style={buildAdvancedActionButtonStyle(true, artifactBusy[busyKey])}>
+                  {artifactBusy[busyKey] ? `${outputLabel} 생성 중...` : `${outputLabel} 생성`}
+                </button>
+                <button type="button" onClick={() => handleExport(mode === 'docs' ? 'docx' : 'pptx', mode === 'docs' ? 'report' : 'slides')} disabled={!artifact || !!artifactBusy.export} style={buildAdvancedActionButtonStyle(false, !artifact || !!artifactBusy.export)}>
+                  {mode === 'docs' ? 'DOCX 다운로드' : 'PPTX 다운로드'}
+                </button>
+                <button type="button" onClick={() => handleExport(mode === 'docs' ? 'google-docs' : 'google-slides', mode === 'docs' ? 'report' : 'slides')} disabled={!artifact || !!artifactBusy.export} style={buildAdvancedActionButtonStyle(false, !artifact || !!artifactBusy.export)}>
+                  {googleExportState.mode === 'oauth' && !googleExportState.connected ? `Google 연결 후 ${mode === 'docs' ? 'Docs' : 'Slides'}` : mode === 'docs' ? 'Google Docs' : 'Google Slides'}
+                </button>
+                <button type="button" onClick={clearGeneratedOutput} style={buildAdvancedActionButtonStyle(false, false)}>
+                  결과물 비우기
+                </button>
+                {artifact && (
+                  <div style={{ padding: '12px', borderRadius: '12px', background: '#f8fafc', border: '1px solid rgba(226, 232, 240, 0.9)', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: '#475569', lineHeight: 1.45 }}>
+                    현재 {outputLabel} 출력 소스 · {outputSource === 'debate' ? '토론 기반 seed' : '브리프 기반 생성'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderBuilder = (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const outlineTitles = mode === 'docs' ? docsOutlinePreview : pptOutlinePreview;
+    const domainEntry = getDomainEntry(brief.domain);
+    const promptRecommendations = mode === 'docs' ? docsPromptRecommendations : pptPromptRecommendations;
+    const artifact = mode === 'docs' ? artifacts?.report : artifacts?.slides;
+    const busyKey = mode === 'docs' ? 'docs' : 'ppt';
+    const outputLabel = mode === 'docs' ? '문서' : 'PPT';
+    const hasDebateContext = Boolean(debateSeedDossier || consensus || messages.length > 0);
+    const stage = builderStage[mode] || 'overview';
+
+    if (stage === 'advanced') {
+      return renderAdvancedBuilder(mode);
+    }
+
+    if (stage === 'overview') {
+      return (
+        <div style={{ display: 'grid', gap: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: mode === 'docs' ? '#67e8f9' : '#93c5fd', letterSpacing: '0.16em', marginBottom: '6px' }}>
+                {mode === 'docs' ? 'DOCUMENT STUDIO' : 'DECK STUDIO'}
+              </div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '18px', fontWeight: 700, color: '#f8fafc', marginBottom: '4px' }}>
+                {mode === 'docs' ? '주제 개요부터 시작' : '발표 개요부터 시작'}
+              </div>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(191, 248, 255, 0.62)', letterSpacing: '0.12em', marginBottom: '8px' }}>
+                STEP 1 / 2 · OVERVIEW
+              </div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.7)', lineHeight: 1.45 }}>
+                먼저 주제 개요를 정리하면 추천 프롬프트와 예상 윤곽선을 바탕으로 다음 단계에서 구조를 구체화합니다.
+              </div>
+            </div>
+            <button type="button" onClick={() => handleModeSelect('home')} style={secondaryButtonStyle(false)}>
+              시작 화면으로
             </button>
           </div>
 
-          {topicSuggestions.length > 0 && (
-            <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {topicSuggestions.map((item, index) => (
-                <button
-                  key={`${item.title}-${index}`}
-                  type="button"
-                  onClick={() => setDebateInput(item.title)}
-                  style={{
-                    textAlign: 'left',
-                    padding: '10px',
-                    borderRadius: '10px',
-                    border: '1px solid rgba(148, 163, 184, 0.18)',
-                    background: 'rgba(15, 23, 42, 0.64)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
-                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', fontWeight: 700, color: '#ecfeff' }}>{item.title}</div>
-                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#7dd3fc' }}>N {item.noveltyScore} / U {item.urgencyScore}</div>
+          <div style={{ display: 'grid', gap: '12px' }}>
+            <label>
+              <span style={fieldLabelStyle}>주제 개요</span>
+              <textarea
+                value={brief.overview}
+                onChange={(event) => updateBrief(mode, { overview: event.target.value })}
+                placeholder={mode === 'docs' ? '예: 우주산업에서 고체 물리 기반 기술이 사업화되는 경로를 해설형 문서로 정리' : '예: AI 에이전트 시장의 투자 포인트를 투자자용 발표자료로 정리'}
+                rows={6}
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </label>
+          </div>
+
+          <div style={{ border: '1px solid rgba(148, 163, 184, 0.14)', borderRadius: '14px', padding: '14px', background: 'rgba(2, 6, 23, 0.4)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#c4f1ff', letterSpacing: '0.14em' }}>PROMPT RECOMMENDATIONS</div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)' }}>
+                개요 아래에서 바로 고를 수 있는 추천 프롬프트입니다.
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: '10px' }}>
+              {promptRecommendations.map((example, index) => (
+                <button key={`${example.title}-${index}`} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.66)', cursor: 'pointer' }}>
+                  <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginBottom: '6px' }}>
+                    {example.title}
                   </div>
-                  <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.4 }}>{item.rationale}</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-                    {item.focusArea && (
-                      <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#86efac', letterSpacing: '0.08em' }}>
-                        FOCUS · {item.focusArea}
-                      </div>
-                    )}
-                    {item.recommendedOutput && (
-                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '11px', color: '#bfdbfe', lineHeight: 1.35 }}>
-                        Flow · {item.recommendedOutput}
-                      </div>
-                    )}
-                    {item.evidenceHint && (
-                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '11px', color: 'rgba(226, 232, 240, 0.62)', lineHeight: 1.35 }}>
-                        Evidence hint · {item.evidenceHint}
-                      </div>
-                    )}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.1em' }}>DOMAIN · {example.domainLabel}</div>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#86efac', letterSpacing: '0.1em' }}>AUDIENCE · {example.audience}</div>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#fcd34d', letterSpacing: '0.1em' }}>THEME · {getThemeEntry(example.theme).label}</div>
                   </div>
                 </button>
               ))}
             </div>
-          )}
+          </div>
 
-          <div style={{ position: 'relative', marginBottom: '10px' }}>
-            <textarea
-              value={debateInput}
-              onChange={(event) => { setDebateInput(event.target.value); setTranscriptError(''); }}
-              placeholder={'토론 주제 또는 YouTube URL\n\n예: AI agent 팀이 스스로 주제를 발굴하는 운영 구조\n예: https://youtu.be/...'}
-              disabled={isLoading}
-              rows={5}
-              style={{
-                width: '100%', padding: '12px',
-                background: 'rgba(255,255,255,0.04)',
-                border: `1px solid ${isYT ? 'rgba(248, 113, 113, 0.42)' : 'rgba(148, 163, 184, 0.2)'}`,
-                borderRadius: '10px', color: 'white',
-                fontSize: '13px', fontFamily: 'inherit',
-                resize: 'vertical', outline: 'none', boxSizing: 'border-box',
-              }}
-            />
-            {isYT && (
-              <div style={{
-                position: 'absolute', top: '8px', right: '8px',
-                background: 'rgba(239, 68, 68, 0.86)', color: 'white',
-                fontFamily: 'Orbitron, sans-serif', fontSize: '8px',
-                padding: '3px 7px', borderRadius: '999px', letterSpacing: '0.1em',
-              }}>
-                YOUTUBE
+          <div style={{ display: 'grid', gap: '8px' }}>
+            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em' }}>
+              OVERVIEW OUTLINE PREVIEW
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)', lineHeight: 1.45 }}>
+              개요를 기준으로 {mode === 'docs' ? '문서가 어떤 섹션 구조로 전개될지' : '발표자료가 어떤 슬라이드 흐름으로 전개될지'} 미리 보여줍니다.
+            </div>
+            {renderOutlinePreview(mode, outlineTitles, brief.theme)}
+          </div>
+
+          <button type="button" onClick={() => handleAdvanceBuilder(mode)} disabled={!cleanText(brief.overview)} style={buildPrimaryButtonStyle(!cleanText(brief.overview), mode === 'docs' ? 'green' : 'cyan')}>
+            {mode === 'docs' ? '다음으로 문서 구조 설정하기' : '다음으로 PPT 구조 설정하기'}
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: 'grid', gap: '14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: mode === 'docs' ? '#67e8f9' : '#93c5fd', letterSpacing: '0.16em', marginBottom: '6px' }}>
+              {mode === 'docs' ? 'DOCUMENT STUDIO' : 'DECK STUDIO'}
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '18px', fontWeight: 700, color: '#f8fafc', marginBottom: '4px' }}>
+              {mode === 'docs' ? '브리프 기반 문서 설계' : '브리프 기반 PPT 설계'}
+            </div>
+            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(191, 248, 255, 0.62)', letterSpacing: '0.12em', marginBottom: '8px' }}>
+              STEP 2 / 2 · DETAILS
+            </div>
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.7)', lineHeight: 1.45 }}>
+              주제 개요를 바탕으로 독자, 도메인, 시각 테마, 텍스트 양, 이미지 사용 여부를 구체화합니다.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', minWidth: '200px' }}>
+            <button type="button" onClick={() => handleBackToOverview(mode)} style={secondaryButtonStyle(false)}>
+              개요 수정
+            </button>
+            <button type="button" onClick={() => handleModeSelect('home')} style={secondaryButtonStyle(false)}>
+              시작 화면으로
+            </button>
+            <button type="button" onClick={clearGeneratedOutput} style={secondaryButtonStyle(false)}>
+              결과물 비우기
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
+          <div style={{ display: 'grid', gap: '12px' }}>
+            <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(15, 23, 42, 0.56)' }}>
+              <div style={{ ...fieldLabelStyle, marginBottom: '8px' }}>주제 개요</div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', color: '#f8fafc', lineHeight: 1.45 }}>
+                {cleanText(brief.overview) || '개요 없음'}
               </div>
-            )}
+            </div>
+
+            <label>
+              <span style={fieldLabelStyle}>{mode === 'docs' ? '독자 / 제출 대상' : '청중 / 발표 대상'}</span>
+              <input
+                value={brief.audience}
+                onChange={(event) => updateBrief(mode, { audience: event.target.value })}
+                placeholder={mode === 'docs' ? '예: 경영진, 교수, 고객사' : '예: 투자자, 사내 임원, 세미나 청중'}
+                style={inputStyle}
+              />
+            </label>
+
+            <div>
+              <div style={fieldLabelStyle}>도메인</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {DOMAIN_LIBRARY.map((item) => (
+                  <button key={item.id} type="button" onClick={() => updateBrief(mode, { domain: item.id })} style={buildChipStyle(brief.domain === item.id)}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.66)' }}>
+                {domainEntry.note}
+              </div>
+            </div>
+
+            <div>
+              <div style={fieldLabelStyle}>토론 인사이트 사용</div>
+              <div style={segmentedGridStyle}>
+                {DEBATE_USAGE_OPTIONS.map((option) => (
+                  <button key={option.id} type="button" onClick={() => updateBrief(mode, { debateUsage: option.id })} style={buildChipStyle(brief.debateUsage === option.id, 'rgba(244, 114, 182, 0.38)')}>
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: hasDebateContext ? '#c4b5fd' : 'rgba(226, 232, 240, 0.56)' }}>
+                {hasDebateContext ? DEBATE_USAGE_OPTIONS.find((item) => item.id === brief.debateUsage)?.note : '현재 저장된 토론 seed가 없습니다. 선택해도 브리프 기반 생성으로 동작합니다.'}
+              </div>
+            </div>
           </div>
 
-          {transcriptError && (
-            <div style={{ color: '#fca5a5', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', marginBottom: '8px' }}>
-              {transcriptError}
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {renderOutlinePreview(mode, outlineTitles, brief.theme)}
+
+            <div>
+              <div style={fieldLabelStyle}>시각 테마</div>
+              <div style={segmentedGridStyle}>
+                {THEME_OPTIONS.map((item) => (
+                  <button key={item.id} type="button" onClick={() => updateBrief(mode, { theme: item.id })} style={buildChipStyle(brief.theme === item.id, 'rgba(56, 189, 248, 0.38)')}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.66)' }}>
+                {getThemeEntry(brief.theme).note}
+              </div>
             </div>
-          )}
 
-          <button type="submit" disabled={isLoading || !debateInput.trim()} style={primaryButtonStyle(isLoading || !debateInput.trim(), isYT ? 'amber' : 'blue')}>
-            {isFetchingTranscript ? '영상 맥락 로딩 중...' : isDiscussing ? '토론 진행 중...' : isYT ? 'YouTube 토론 시작' : '토론 시작'}
+            <div>
+              <div style={fieldLabelStyle}>텍스트 양</div>
+              <div style={segmentedGridStyle}>
+                {TEXT_DENSITY_OPTIONS.map((item) => (
+                  <button key={item.id} type="button" onClick={() => updateBrief(mode, { textDensity: item.id })} style={buildChipStyle(brief.textDensity === item.id, 'rgba(52, 211, 153, 0.38)')}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.66)' }}>
+                {getTextDensityEntry(brief.textDensity).note}
+              </div>
+            </div>
+
+            <div>
+              <div style={fieldLabelStyle}>AI 이미지</div>
+              <div style={segmentedGridStyle}>
+                {AI_IMAGE_OPTIONS.map((item) => (
+                  <button key={item.id} type="button" onClick={() => updateBrief(mode, { aiImageMode: item.id })} style={buildChipStyle(brief.aiImageMode === item.id, 'rgba(250, 204, 21, 0.38)')}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.66)' }}>
+                {getAiImageEntry(brief.aiImageMode).note}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '8px' }}>
+          <button type="button" onClick={() => handleGenerateArtifact(mode)} disabled={artifactBusy[busyKey]} style={buildPrimaryButtonStyle(artifactBusy[busyKey], mode === 'docs' ? 'green' : 'cyan')}>
+            {artifactBusy[busyKey] ? `${outputLabel} 생성 중...` : `${outputLabel} 생성`}
           </button>
-        </form>
-      )}
+          <button type="button" onClick={() => handleExport(mode === 'docs' ? 'docx' : 'pptx', mode === 'docs' ? 'report' : 'slides')} disabled={!artifact || !!artifactBusy.export} style={secondaryButtonStyle(!artifact || !!artifactBusy.export)}>
+            {mode === 'docs' ? 'DOCX 다운로드' : 'PPTX 다운로드'}
+          </button>
+          <button type="button" onClick={() => handleExport(mode === 'docs' ? 'google-docs' : 'google-slides', mode === 'docs' ? 'report' : 'slides')} disabled={!artifact || !!artifactBusy.export} style={secondaryButtonStyle(!artifact || !!artifactBusy.export)}>
+            {googleExportState.mode === 'oauth' && !googleExportState.connected ? `Google 연결 후 ${mode === 'docs' ? 'Docs' : 'Slides'}` : mode === 'docs' ? 'Google Docs' : 'Google Slides'}
+          </button>
+          <button type="button" onClick={() => handleArtifactFeedback(mode === 'docs' ? 'report' : 'slides', 'up')} disabled={!artifact || !!artifactBusy.feedback} style={secondaryButtonStyle(!artifact || !!artifactBusy.feedback)}>
+            좋은 {outputLabel}
+          </button>
+        </div>
 
-      {activeTab === 'docs' && (
+        {artifact && (
+          <button type="button" onClick={() => handleArtifactFeedback(mode === 'docs' ? 'report' : 'slides', 'down')} disabled={!!artifactBusy.feedback} style={secondaryButtonStyle(!!artifactBusy.feedback)}>
+            개선 필요 {outputLabel}
+          </button>
+        )}
+
+        {artifact && (
+          <div style={{ padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(8, 47, 73, 0.18)', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#dbeafe', lineHeight: 1.45 }}>
+            현재 {outputLabel} 출력 소스 · {outputSource === 'debate' ? '토론 기반 seed' : '브리프 기반 생성'}
+          </div>
+        )}
+
+        <button type="button" onClick={() => handleOpenAdvancedBuilder(mode)} style={secondaryButtonStyle(false)}>
+          고급 모드 열기
+        </button>
+      </div>
+    );
+  };
+
+  const renderDebateLab = () => (
+    <div style={{ display: 'grid', gap: '14px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
         <div>
-          <div style={{ marginBottom: '8px', fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#86efac', letterSpacing: '0.14em' }}>
-            REPORT FACTORY
+          <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#f59e0b', letterSpacing: '0.16em', marginBottom: '6px' }}>DEBATE LAB</div>
+          <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '18px', fontWeight: 700, color: '#f8fafc', marginBottom: '4px' }}>학습용 토론과 인사이트 수집</div>
+          <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45 }}>
+            이 공간은 내부 reasoning과 학습 데이터 축적용입니다. 문서/PPT 생성의 필수 단계는 아닙니다.
           </div>
-          <div style={{ marginBottom: '8px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)' }}>
-            현재 Debate -&gt; Dossier 결과를 기준으로 보고서 초안, DOCX, Google Docs를 만듭니다.
-          </div>
-          {googleExportState.mode === 'oauth' && (
-            <div style={{ marginBottom: '8px', fontFamily: 'Rajdhani, sans-serif', fontSize: '11px', color: googleExportState.connected ? '#86efac' : '#fcd34d' }}>
-              {googleExportState.loading
-                ? 'Google export 연결 상태 확인 중...'
-                : googleExportState.connected
-                  ? 'Google 계정 연결됨: 개인 Drive로 직접 문서를 만듭니다.'
-                  : 'Google 계정 연결 필요: 첫 1회 로그인 후 개인 Drive로 문서를 만듭니다.'}
-            </div>
-          )}
-          <input
-            value={docsAudience}
-            onChange={(event) => setDocsAudience(event.target.value)}
-            placeholder="독자 예: 경영진, 고객사, 투자자"
-            className="input-space"
-            style={{ width: '100%', marginBottom: '8px', borderRadius: '8px' }}
-          />
-          <textarea
-            value={docsRequest}
-            onChange={(event) => setDocsRequest(event.target.value)}
-            placeholder="예: 실행계획 중심으로 재구성하고, citation 약한 부분은 별도 표시"
-            rows={4}
-            style={{
-              width: '100%', padding: '12px', borderRadius: '10px', resize: 'vertical',
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(148, 163, 184, 0.2)', color: 'white', marginBottom: '10px',
-            }}
-          />
-          <div style={citationPresetRowStyle}>
-            {CITATION_PRESETS.docs.map((preset) => {
-              const active = docsCitationMode === preset.mode && docsCitationVisibility === preset.visibility;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => {
-                    setDocsCitationMode(preset.mode);
-                    setDocsCitationVisibility(preset.visibility);
-                  }}
-                  style={buildCitationPresetButtonStyle(active)}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '6px' }}>
-            <label>
-              <span style={citationFieldLabelStyle}>CITATION MODE</span>
-              <select value={docsCitationMode} onChange={(event) => setDocsCitationMode(event.target.value)} style={citationSelectStyle}>
-                {CITATION_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span style={citationFieldLabelStyle}>VISIBILITY</span>
-              <select value={docsCitationVisibility} onChange={(event) => setDocsCitationVisibility(event.target.value)} style={citationSelectStyle}>
-                {CITATION_VISIBILITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div style={citationHintStyle}>
-            {activeDocsCitationPreset ? `Preset · ${activeDocsCitationPreset.hint} ` : ''}
-            자동이면 요청문을 보고 추론합니다. 보고서는 mode와 visibility를 직접 고르면 heuristic보다 우선 적용합니다.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-            <button type="button" onClick={() => handleGenerateArtifact('docs')} disabled={artifactBusy.docs} style={primaryButtonStyle(artifactBusy.docs, 'green')}>
-              {artifactBusy.docs ? '생성 중...' : '보고서 생성'}
+        </div>
+        <button type="button" onClick={() => handleModeSelect('home')} style={secondaryButtonStyle(false)}>
+          시작 화면으로
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gap: '10px' }}>
+        <div>
+          <div style={fieldLabelStyle}>자율 주제 발굴</div>
+          <input value={focusInput} onChange={(event) => setFocusInput(event.target.value)} placeholder="예: 규제, AI agent, 제조, 헬스케어" style={inputStyle} />
+        </div>
+        <button type="button" onClick={handleGenerateTopics} disabled={topicsLoading} style={secondaryButtonStyle(topicsLoading)}>
+          {topicsLoading ? '주제 후보 생성 중...' : '자율 주제 후보 만들기'}
+        </button>
+      </div>
+
+      {topicSuggestions.length > 0 && (
+        <div style={{ display: 'grid', gap: '8px' }}>
+          {topicSuggestions.map((item, index) => (
+            <button key={`${item.title}-${index}`} type="button" onClick={() => setDebateInput(item.title)} style={{ textAlign: 'left', padding: '10px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.16)', background: 'rgba(15, 23, 42, 0.64)', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
+                <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', fontWeight: 700, color: '#ecfeff' }}>{item.title}</div>
+                <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#fbbf24' }}>N {item.noveltyScore} / U {item.urgencyScore}</div>
+              </div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.4 }}>{item.rationale}</div>
             </button>
-            <button type="button" onClick={() => handleExport('docx', 'report')} disabled={!artifacts?.report || !!artifactBusy.export} style={secondaryButtonStyle(!artifacts?.report || !!artifactBusy.export)}>
-              DOCX 다운로드
-            </button>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            <button type="button" onClick={() => handleExport('google-docs', 'report')} disabled={!artifacts?.report || !!artifactBusy.export} style={secondaryButtonStyle(!artifacts?.report || !!artifactBusy.export)}>
-              {googleExportState.mode === 'oauth' && !googleExportState.connected ? 'Google 연결 후 Docs' : 'Google Docs'}
-            </button>
-            <button type="button" onClick={() => handleArtifactFeedback('report', 'up')} disabled={!artifacts?.report || !!artifactBusy.feedback} style={secondaryButtonStyle(!artifacts?.report || !!artifactBusy.feedback)}>
-              좋은 보고서
-            </button>
-          </div>
-          <button type="button" onClick={() => handleArtifactFeedback('report', 'down')} disabled={!artifacts?.report || !!artifactBusy.feedback} style={{ ...secondaryButtonStyle(!artifacts?.report || !!artifactBusy.feedback), marginTop: '8px' }}>
-            개선 필요 보고서
-          </button>
+          ))}
         </div>
       )}
 
-      {activeTab === 'ppt' && (
-        <div>
-          <div style={{ marginBottom: '8px', fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#93c5fd', letterSpacing: '0.14em' }}>
-            PPT FACTORY
-          </div>
-          <div style={{ marginBottom: '8px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)' }}>
-            현재 Debate -&gt; Dossier 결과를 기준으로 발표자료 초안, PPTX, Google Slides를 만듭니다.
-          </div>
-          {googleExportState.mode === 'oauth' && (
-            <div style={{ marginBottom: '8px', fontFamily: 'Rajdhani, sans-serif', fontSize: '11px', color: googleExportState.connected ? '#86efac' : '#fcd34d' }}>
-              {googleExportState.loading
-                ? 'Google export 연결 상태 확인 중...'
-                : googleExportState.connected
-                  ? 'Google 계정 연결됨: 개인 Drive로 직접 슬라이드를 만듭니다.'
-                  : 'Google 계정 연결 필요: 첫 1회 로그인 후 개인 Drive로 슬라이드를 만듭니다.'}
+      <form onSubmit={handleDebateSubmit} style={{ display: 'grid', gap: '10px' }}>
+        <div style={{ position: 'relative' }}>
+          <textarea
+            value={debateInput}
+            onChange={(event) => { setDebateInput(event.target.value); setTranscriptError(''); }}
+            placeholder={'토론 주제 또는 YouTube URL\n\n예: 데이터 주권과 AI 학습 데이터 확보 전략\n예: https://youtu.be/...'}
+            disabled={isLoading}
+            rows={5}
+            style={{ ...inputStyle, resize: 'vertical', border: `1px solid ${isYT ? 'rgba(248, 113, 113, 0.42)' : 'rgba(148, 163, 184, 0.18)'}` }}
+          />
+          {isYT && (
+            <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(239, 68, 68, 0.9)', color: 'white', fontFamily: 'Orbitron, sans-serif', fontSize: '8px', padding: '4px 7px', borderRadius: '999px', letterSpacing: '0.1em' }}>
+              YOUTUBE
             </div>
           )}
-          <input
-            value={pptAudience}
-            onChange={(event) => setPptAudience(event.target.value)}
-            placeholder="청중 예: 투자자, 사내 임원, 고객 제안 발표"
-            className="input-space"
-            style={{ width: '100%', marginBottom: '8px', borderRadius: '8px' }}
-          />
-          <textarea
-            value={pptRequest}
-            onChange={(event) => setPptRequest(event.target.value)}
-            placeholder="예: 5장 이내, 숫자와 근거 위주, 마지막 장에 next action 강조"
-            rows={4}
-            style={{
-              width: '100%', padding: '12px', borderRadius: '10px', resize: 'vertical',
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(148, 163, 184, 0.2)', color: 'white', marginBottom: '10px',
-            }}
-          />
-          <div style={citationPresetRowStyle}>
-            {CITATION_PRESETS.ppt.map((preset) => {
-              const active = pptCitationMode === preset.mode && pptCitationVisibility === preset.visibility;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => {
-                    setPptCitationMode(preset.mode);
-                    setPptCitationVisibility(preset.visibility);
-                  }}
-                  style={buildCitationPresetButtonStyle(active)}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '6px' }}>
-            <label>
-              <span style={citationFieldLabelStyle}>CITATION MODE</span>
-              <select value={pptCitationMode} onChange={(event) => setPptCitationMode(event.target.value)} style={citationSelectStyle}>
-                {CITATION_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span style={citationFieldLabelStyle}>VISIBILITY</span>
-              <select value={pptCitationVisibility} onChange={(event) => setPptCitationVisibility(event.target.value)} style={citationSelectStyle}>
-                {CITATION_VISIBILITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div style={citationHintStyle}>
-            {activePptCitationPreset ? `Preset · ${activePptCitationPreset.hint} ` : ''}
-            슬라이드는 자동일 때 보통 분산 인용보다 마지막 참고자료 쪽을 선호합니다. 필요하면 inline으로 직접 강제할 수 있습니다.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-            <button type="button" onClick={() => handleGenerateArtifact('ppt')} disabled={artifactBusy.ppt} style={primaryButtonStyle(artifactBusy.ppt, 'blue')}>
-              {artifactBusy.ppt ? '생성 중...' : 'PPT 생성'}
-            </button>
-            <button type="button" onClick={() => handleExport('pptx', 'slides')} disabled={!artifacts?.slides || !!artifactBusy.export} style={secondaryButtonStyle(!artifacts?.slides || !!artifactBusy.export)}>
-              PPTX 다운로드
-            </button>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            <button type="button" onClick={() => handleExport('google-slides', 'slides')} disabled={!artifacts?.slides || !!artifactBusy.export} style={secondaryButtonStyle(!artifacts?.slides || !!artifactBusy.export)}>
-              {googleExportState.mode === 'oauth' && !googleExportState.connected ? 'Google 연결 후 Slides' : 'Google Slides'}
-            </button>
-            <button type="button" onClick={() => handleArtifactFeedback('slides', 'up')} disabled={!artifacts?.slides || !!artifactBusy.feedback} style={secondaryButtonStyle(!artifacts?.slides || !!artifactBusy.feedback)}>
-              좋은 PPT
-            </button>
-          </div>
-          <button type="button" onClick={() => handleArtifactFeedback('slides', 'down')} disabled={!artifacts?.slides || !!artifactBusy.feedback} style={{ ...secondaryButtonStyle(!artifacts?.slides || !!artifactBusy.feedback), marginTop: '8px' }}>
-            개선 필요 PPT
-          </button>
         </div>
-      )}
 
-      <button
-        type="button"
-        onClick={onOpenDashboard}
-        style={{
-          width: '100%', padding: '10px', marginTop: '12px',
-          background: 'linear-gradient(135deg, rgba(8, 145, 178, 0.24) 0%, rgba(37, 99, 235, 0.22) 100%)',
-          border: '1px solid rgba(125, 211, 252, 0.2)', borderRadius: '8px', color: '#bff8ff',
-          fontSize: '12px', fontWeight: 'bold', cursor: 'pointer',
-        }}
-      >
+        {transcriptError && (
+          <div style={{ color: '#fca5a5', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px' }}>
+            {transcriptError}
+          </div>
+        )}
+
+        <button type="submit" disabled={isLoading || !debateInput.trim()} style={buildPrimaryButtonStyle(isLoading || !debateInput.trim(), isYT ? 'amber' : 'cyan')}>
+          {isFetchingTranscript ? '영상 맥락 로딩 중...' : isDiscussing ? '토론 진행 중...' : isYT ? 'YouTube 토론 시작' : '토론 시작'}
+        </button>
+
+        {consensus && !isDiscussing && (
+          <button type="button" onClick={clearDiscussion} style={secondaryButtonStyle(false)}>
+            토론 상태 비우기
+          </button>
+        )}
+      </form>
+    </div>
+  );
+
+  const currentBuilderStage = (activeMode === 'docs' || activeMode === 'ppt') ? (builderStage[activeMode] || 'overview') : 'overview';
+  const isBuilderOverviewStage = (activeMode === 'docs' || activeMode === 'ppt') && currentBuilderStage === 'overview';
+  const isBuilderAdvancedStage = (activeMode === 'docs' || activeMode === 'ppt') && currentBuilderStage === 'advanced';
+
+  return (
+    <div style={{
+      position: 'absolute',
+      top: '20px',
+      left: '20px',
+      zIndex: isBuilderAdvancedStage ? 160 : 100,
+      background: isBuilderAdvancedStage
+        ? 'linear-gradient(180deg, rgba(239, 246, 255, 0.98) 0%, rgba(224, 242, 254, 0.95) 100%)'
+        : 'linear-gradient(180deg, rgba(2, 6, 23, 0.94) 0%, rgba(10, 18, 34, 0.9) 100%)',
+      backdropFilter: 'blur(16px)',
+      padding: '18px',
+      borderRadius: '18px',
+      border: isBuilderAdvancedStage ? '1px solid rgba(191, 219, 254, 0.9)' : '1px solid rgba(125, 211, 252, 0.16)',
+      width: activeMode === 'home' ? '380px' : activeMode === 'debate' ? '430px' : isBuilderAdvancedStage ? 'calc(100vw - 40px)' : isBuilderOverviewStage ? '480px' : 'min(620px, calc(100vw - 40px))',
+      maxHeight: '92vh',
+      overflowY: 'auto',
+      transition: 'width 0.25s ease, border-color 0.3s ease',
+      boxSizing: 'border-box',
+      color: isBuilderAdvancedStage ? '#0f172a' : 'inherit',
+    }}>
+      <div style={{ marginBottom: '14px' }}>
+        <div style={{ color: isBuilderAdvancedStage ? '#1d4ed8' : '#c4f1ff', fontSize: '16px', marginBottom: '6px', fontFamily: 'Orbitron, monospace', letterSpacing: '0.14em' }}>
+          AI GODS STUDIO
+        </div>
+        <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: isBuilderAdvancedStage ? 'rgba(15, 23, 42, 0.68)' : 'rgba(226, 232, 240, 0.72)', lineHeight: 1.4 }}>
+          토론은 내부 reasoning 엔진으로 두고, 문서와 PPT는 브리프 중심 Studio로 따로 설계합니다.
+        </div>
+      </div>
+
+      {activeMode === 'home' ? renderHome() : activeMode === 'debate' ? renderDebateLab() : renderBuilder(activeMode)}
+
+      <button type="button" onClick={onOpenDashboard} style={{ width: '100%', padding: '10px', marginTop: '12px', background: 'linear-gradient(135deg, rgba(8, 145, 178, 0.24) 0%, rgba(37, 99, 235, 0.22) 100%)', border: '1px solid rgba(125, 211, 252, 0.2)', borderRadius: '8px', color: '#bff8ff', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>
         운영 대시보드 열기
       </button>
 
-      {(isDiscussing || isFetchingTranscript) && (
+      {(isDiscussing || isFetchingTranscript || statusText) && (
         <div style={{ marginTop: '14px' }}>
           {isDiscussing && (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.6)' }}>
-                  ROUND {currentRound}
-                </span>
+                <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.6)' }}>ROUND {currentRound}</span>
                 <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(100,200,255,0.3)' }}>/ MAX {displayTotalRounds}</span>
               </div>
               <div style={{ height: '3px', background: 'rgba(100,200,255,0.1)', borderRadius: '999px', marginBottom: '8px' }}>
-                <div style={{
-                  height: '100%', width: `${progressWidth}%`,
-                  background: 'linear-gradient(90deg, #0ea5e9, #34d399)',
-                  borderRadius: '999px', transition: 'width 0.5s ease',
-                }} />
+                <div style={{ height: '100%', width: `${progressWidth}%`, background: 'linear-gradient(90deg, #0ea5e9, #34d399)', borderRadius: '999px', transition: 'width 0.5s ease' }} />
               </div>
             </>
           )}
-          <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(255,180,0,0.8)', lineHeight: 1.4 }}>
+          <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(255,180,0,0.84)', lineHeight: 1.4 }}>
             {isFetchingTranscript ? 'YouTube transcript 수집 중...' : statusText}
           </div>
         </div>
@@ -780,26 +1836,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
       {dossier?.citationSummary && (
         <div style={{ marginTop: '12px', padding: '10px', borderRadius: '10px', background: 'rgba(6, 78, 59, 0.16)', border: '1px solid rgba(52, 211, 153, 0.16)' }}>
-          <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#6ee7b7', letterSpacing: '0.14em', marginBottom: '6px' }}>
-            CITATION HEALTH
-          </div>
+          <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#6ee7b7', letterSpacing: '0.14em', marginBottom: '6px' }}>SOURCE HEALTH</div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#ecfdf5' }}>평균 {dossier.citationSummary.averageCitationScore || 0}/100</div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#d1fae5' }}>검증 {dossier.citationSummary.verifiedCount || 0}</div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#fecaca' }}>재검토 {dossier.citationSummary.needsReviewCount || 0}</div>
           </div>
         </div>
-      )}
-
-      {consensus && !isDiscussing && (
-        <button onClick={clearDiscussion} style={{
-          width: '100%', marginTop: '12px', padding: '8px',
-          background: 'transparent', border: '1px solid rgba(100,200,255,0.18)',
-          color: 'rgba(191, 248, 255, 0.66)', fontFamily: 'Orbitron, sans-serif',
-          fontSize: '9px', letterSpacing: '0.1em', cursor: 'pointer', borderRadius: '8px',
-        }}>
-          새 작업 시작
-        </button>
       )}
     </div>
   );

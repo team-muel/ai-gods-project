@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AI_GODS } from '../../config/aiGods'
 import { useDiscussionStore } from '../../store/discussionStore'
+import { useWorkbenchStore } from '../../store/workbenchStore'
 import { submitDebateFeedback } from '../../services/rewardLearningService'
 
 // 마크다운 기호 제거 (**, *, #, - 등)
@@ -142,7 +143,8 @@ function CitationLedgerList({
 
 
 export default function RightPanel({ selectedGod }) {
-  const { messages, topic, isDiscussing, debateId, consensus, dossier, artifacts, currentRound, totalRounds, statusText } = useDiscussionStore()
+  const { messages, topic, isDiscussing, debateId, consensus, currentRound, totalRounds, statusText } = useDiscussionStore()
+  const { dossier, artifacts } = useWorkbenchStore()
   const [activeTab, setActiveTab] = useState('log') // 'log' | 'consensus' | 'dossier' | 'artifacts'
   const [feedbackState, setFeedbackState] = useState({ direction: '', saving: false, message: '' })
   const displayTotalRounds = Math.max(totalRounds || 0, currentRound || 0, 1)

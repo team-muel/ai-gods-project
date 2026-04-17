@@ -12,14 +12,18 @@ import RightPanel from './components/ui/RightPanel'
 import BottomBar from './components/ui/BottomBar'
 import { AI_GODS } from './config/aiGods'
 import { useDiscussionStore } from './store/discussionStore'
+import { useWorkbenchStore } from './store/workbenchStore'
 import { useDebateStats } from './hooks/useDebateStats'
 
 export default function App() {
   const [selectedGod, setSelectedGod] = useState(null)
   const [view, setView] = useState(() => (typeof window !== 'undefined' && window.location.hash === '#dashboard' ? 'dashboard' : 'council'))
-  const { isDiscussing, topic, messages, consensus } = useDiscussionStore()
+  const { isDiscussing, topic, messages, consensus, statusText } = useDiscussionStore()
+  const { activeMode: studioMode, preview } = useWorkbenchStore()
   const debateStats = useDebateStats()
   const { refresh: refreshStats, ...bottomBarStats } = debateStats
+  const hologramTopic = isDiscussing ? topic : preview?.title || ''
+  const hologramSubtitle = isDiscussing ? statusText : preview?.subtitle || ''
 
   useEffect(() => {
     const syncViewFromHash = () => {
@@ -92,7 +96,13 @@ export default function App() {
         <ConnectionLines gods={AI_GODS} />
 
         {/* 중앙 홀로그램 */}
-        <CenterHologram topic={topic} isActive={isDiscussing} />
+        <CenterHologram
+          topic={hologramTopic}
+          subtitle={hologramSubtitle}
+          outline={Array.isArray(preview?.outline) ? preview.outline : []}
+          mode={isDiscussing ? 'debate' : studioMode}
+          isActive={isDiscussing || studioMode !== 'home'}
+        />
 
         {/* 카메라 컨트롤 */}
         <OrbitControls

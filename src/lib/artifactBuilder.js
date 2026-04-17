@@ -708,12 +708,50 @@ const buildOutlineEntriesFromSpecs = ({ specs = [], artifactType = 'report', req
   }
 })
 
+const normalizeExplicitOutlineTitles = (items = [], { artifactType = 'report', maxItems = 6 } = {}) => uniqueBy(
+  (Array.isArray(items) ? items : [])
+    .map((item) => normalizeOutlineTitleFragment(item))
+    .filter((item) => isLikelyOutlineTitle(item, { artifactType })),
+  (item) => item.toLowerCase(),
+).slice(0, maxItems)
+
+const getContentDensityLimit = (textDensity = '', { artifactType = 'report' } = {}) => {
+  const normalized = cleanText(textDensity).toLowerCase()
+  if (artifactType === 'slides') {
+    if (normalized === 'light') return 2
+    if (normalized === 'dense') return 4
+    return 3
+  }
+
+  if (normalized === 'light') return 3
+  if (normalized === 'dense') return 5
+  return 4
+}
+
+const buildCustomizationSummaryLines = (customization = {}) => [
+  customization.briefDomain ? `- 도메인: ${customization.briefDomain}` : null,
+  customization.visualTheme ? `- 시각 테마: ${customization.visualTheme}` : null,
+  customization.visualPreset ? `- 테마 프리셋: ${customization.visualPreset}` : null,
+  customization.textDensity ? `- 텍스트 양: ${customization.textDensity}` : null,
+  customization.aiImageMode ? `- AI 이미지: ${customization.aiImageMode}` : null,
+  customization.imageSource ? `- 이미지 출처: ${customization.imageSource}` : null,
+  customization.imageStylePreset ? `- 이미지 스타일: ${customization.imageStylePreset}` : null,
+  customization.cardCount ? `- 카드 수: ${customization.cardCount}` : null,
+  customization.layoutPreset ? `- 레이아웃 모드: ${customization.layoutPreset}` : null,
+  customization.language ? `- 언어: ${customization.language}` : null,
+  customization.writingNote ? `- 추가 작성 메모: ${customization.writingNote}` : null,
+  customization.toneNote ? `- 톤 메모: ${customization.toneNote}` : null,
+].filter((line) => line !== null)
+
 const buildReportSectionBlueprint = (dossier = {}, customization = {}) => {
   const request = cleanText(customization.reportRequest || '')
   const audience = cleanText(customization.audience || '')
   const requestKeywords = extractKeywordsFromText(request)
   const features = buildAssignmentFeatures(request)
-  const explicitTitles = extractExplicitOutlineTitles(request, { artifactType: 'report', maxItems: 6 })
+  const structuredOutlineTitles = normalizeExplicitOutlineTitles(customization.reportOutlineTitles, { artifactType: 'report', maxItems: 6 })
+  const explicitTitles = structuredOutlineTitles.length > 0
+    ? structuredOutlineTitles
+    : extractExplicitOutlineTitles(request, { artifactType: 'report', maxItems: 6 })
   const citationPolicy = buildArtifactCitationPolicy({
     request,
     artifactType: 'report',
@@ -792,7 +830,10 @@ const buildSlideBlueprint = (dossier = {}, customization = {}) => {
   const requestKeywords = extractKeywordsFromText(request)
   const features = buildAssignmentFeatures(request)
   const requestedCount = parseRequestedSlideCount(request) || 6
-  const explicitTitles = extractExplicitOutlineTitles(request, { artifactType: 'slides', maxItems: requestedCount })
+  const structuredOutlineTitles = normalizeExplicitOutlineTitles(customization.slideOutlineTitles, { artifactType: 'slides', maxItems: requestedCount })
+  const explicitTitles = structuredOutlineTitles.length > 0
+    ? structuredOutlineTitles
+    : extractExplicitOutlineTitles(request, { artifactType: 'slides', maxItems: requestedCount })
   const citationPolicy = buildArtifactCitationPolicy({
     request,
     artifactType: 'slides',
@@ -1080,6 +1121,7 @@ const buildReportSectionSummaryBullets = ({ section = {}, dossier = {}, customiz
 
 const buildReportSections = (dossier = {}, customization = {}) => {
   const blueprint = buildReportSectionBlueprint(dossier, customization)
+  const summaryDensityLimit = getContentDensityLimit(customization.textDensity, { artifactType: 'report' })
   const assignedSections = assignEvidenceToOutlineItems({
     items: blueprint.sections,
     evidence: dossier.evidence || [],
@@ -1127,7 +1169,7 @@ const buildReportSections = (dossier = {}, customization = {}) => {
         dossier,
         customization,
         context,
-      }),
+      }).slice(0, summaryDensityLimit),
       evidenceLines: section.category === 'references' || !section.showEvidenceLines
         ? []
         : buildSectionEvidenceLines(section.evidenceItems, {
@@ -1516,6 +1558,7 @@ const buildReportMarkdown = (dossier, customization = {}, reportPlanInput = null
     `- 준비도: ${dossier.readinessScore || 0}/100`,
     customization.audience ? `- 독자: ${customization.audience}` : null,
     customization.reportRequest ? `- 사용자 요청: ${customization.reportRequest}` : null,
+    ...buildCustomizationSummaryLines(customization),
     reportPlan.profile ? `- 작성 프로필: ${reportPlan.profile}` : null,
     `- 섹션 설계: ${reportPlan.source === 'explicit' ? '사용자 지정 과제 파트 반영' : '요청 기반 자동 설계'}`,
     reportPlan.citationPolicy ? `- 인용 정책: ${reportPlan.citationPolicy.mode} / ${reportPlan.citationPolicy.visibility}` : null,
@@ -1533,6 +1576,7 @@ const buildReportMarkdown = (dossier, customization = {}, reportPlanInput = null
 
 const buildSlideOutline = (dossier, customization = {}, slidePlanInput = null) => {
   const slidePlan = slidePlanInput || buildSlidePlan(dossier, customization)
+  const bulletLimit = getContentDensityLimit(customization.textDensity, { artifactType: 'slides' })
   const slidePolicy = slidePlan.citationPolicy || buildArtifactCitationPolicy({
     request: cleanText(customization.slideRequest || ''),
     artifactType: 'slides',
@@ -1759,7 +1803,7 @@ const buildSlideOutline = (dossier, customization = {}, slidePlanInput = null) =
       accent: getSlideAccentForCategory(plan.category, slideProfile),
       citationRequirement: plan.citationRequirement,
       citationDisplay: plan.citationDisplay,
-      bullets: bullets.length > 0 ? bullets : ['핵심 메시지 없음'],
+      bullets: (bullets.length > 0 ? bullets : ['핵심 메시지 없음']).slice(0, bulletLimit),
       highlights,
       metrics,
       quote,
@@ -1817,6 +1861,20 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       citationPolicy: reportPlan.citationPolicy,
       writingProfile: reportPlan.profile,
       scholarlySummary: dossier.scholarlySummary || null,
+      briefPreferences: {
+        domain: customization.briefDomain || null,
+        visualTheme: customization.visualTheme || null,
+        visualPreset: customization.visualPreset || null,
+        textDensity: customization.textDensity || null,
+        aiImageMode: customization.aiImageMode || null,
+        imageSource: customization.imageSource || null,
+        imageStylePreset: customization.imageStylePreset || null,
+        cardCount: customization.cardCount || null,
+        layoutPreset: customization.layoutPreset || null,
+        language: customization.language || null,
+        writingNote: customization.writingNote || null,
+        toneNote: customization.toneNote || null,
+      },
     },
     metadata: {
       readinessScore: dossier.readinessScore,
@@ -1831,6 +1889,16 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       source: 'dossier_report_builder',
       audience: customization.audience || null,
       request: customization.reportRequest || null,
+      visualTheme: customization.visualTheme || null,
+      visualPreset: customization.visualPreset || null,
+      textDensity: customization.textDensity || null,
+      aiImageMode: customization.aiImageMode || null,
+      imageSource: customization.imageSource || null,
+      imageStylePreset: customization.imageStylePreset || null,
+      cardCount: customization.cardCount || null,
+      layoutPreset: customization.layoutPreset || null,
+      language: customization.language || null,
+      briefDomain: customization.briefDomain || null,
     },
   }
 
@@ -1857,6 +1925,20 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       citationLedger: slideCitationLedger,
       citationPolicy: slidePlan.citationPolicy,
       scholarlySummary: dossier.scholarlySummary || null,
+      briefPreferences: {
+        domain: customization.briefDomain || null,
+        visualTheme: customization.visualTheme || null,
+        visualPreset: customization.visualPreset || null,
+        textDensity: customization.textDensity || null,
+        aiImageMode: customization.aiImageMode || null,
+        imageSource: customization.imageSource || null,
+        imageStylePreset: customization.imageStylePreset || null,
+        cardCount: customization.cardCount || null,
+        layoutPreset: customization.layoutPreset || null,
+        language: customization.language || null,
+        writingNote: customization.writingNote || null,
+        toneNote: customization.toneNote || null,
+      },
     },
     metadata: {
       slideCount: slideOutline.length,
@@ -1870,6 +1952,16 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       source: 'dossier_slide_builder',
       audience: customization.audience || null,
       request: customization.slideRequest || null,
+      visualTheme: customization.visualTheme || null,
+      visualPreset: customization.visualPreset || null,
+      textDensity: customization.textDensity || null,
+      aiImageMode: customization.aiImageMode || null,
+      imageSource: customization.imageSource || null,
+      imageStylePreset: customization.imageStylePreset || null,
+      cardCount: customization.cardCount || null,
+      layoutPreset: customization.layoutPreset || null,
+      language: customization.language || null,
+      briefDomain: customization.briefDomain || null,
     },
   }
 
