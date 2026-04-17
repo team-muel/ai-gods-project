@@ -59,7 +59,6 @@ const handleWrite = async (req, res) => {
 
   const supabase = getSupabaseServerClient()
   const godId = String(body?.godId || '').trim().slice(0, 64)
-  const godName = String(body?.godName || '').trim().slice(0, 80)
   const topic = String(body?.topic || '').trim().slice(0, 200)
   const debateId = body?.debateId || null
   const opinion = String(body?.opinion || '').slice(0, 600)
@@ -71,14 +70,12 @@ const handleWrite = async (req, res) => {
 
   const slug = topic.toLowerCase().replace(/\s+/g, '-').slice(0, 40)
   const date = new Date().toISOString().slice(0, 10)
-  const safeGodName = godName || godId
   const fileName = `${date}-${slug}.md`
 
   if (debateId) {
     const { error } = await supabase
       .from('god_memories')
       .update({
-        god_name: safeGodName,
         my_opinion: opinion,
         consensus: consensus || null,
         updated_at: new Date().toISOString(),
