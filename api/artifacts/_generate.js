@@ -10,6 +10,38 @@ const normalizeCitationControl = (value = '') => {
   return normalized === 'auto' ? '' : normalized.slice(0, 32)
 }
 
+const normalizeStylePreset = (value = '') => cleanText(value).toLowerCase().replace(/[^a-z-]/g, '').slice(0, 40)
+
+const buildReportProfilePrompt = (reportProfile = '') => {
+  switch (cleanText(reportProfile).toLowerCase()) {
+    case 'university-paper':
+      return '작성 프로필: 대학 과제형 보고서. bullet 남발을 피하고, 각 섹션을 완전한 문단 2~3개로 전개하세요. 문제 제기 -> 배경/프레임 -> 분석 -> 결론 흐름을 분명히 유지하세요.'
+    case 'evidence-analysis':
+      return '작성 프로필: evidence analysis memo. 섹션마다 핵심 판단 한 문장과 그 판단을 지지하는 근거 해석을 붙이세요. 단순 최종 결론 요약으로 끝내지 마세요.'
+    case 'executive-brief':
+      return '작성 프로필: executive brief. 제목과 소제목은 결론형으로 쓰고, 경영진이 바로 의사결정할 수 있게 why now, decision drivers, recommended actions를 분명히 드러내세요.'
+    case 'concept-note':
+      return '작성 프로필: concept note. 설득용 narrative를 유지하되, 배경-메시지 구조-활용 시나리오가 읽히게 구성하세요.'
+    default:
+      return '작성 프로필: structured strategic report. 섹션별 역할을 분명히 나누고, 최종 합의안의 단순 반복 대신 분석과 해석을 전개하세요.'
+  }
+}
+
+const buildSlideProfilePrompt = (slideProfile = '') => {
+  switch (cleanText(slideProfile).toLowerCase()) {
+    case 'investor-deck':
+      return 'deck 프로필: investor deck. 슬라이드 제목은 주제어가 아니라 verdict/headline으로 쓰고, 각 장은 투자자 관점의 why now, opportunity, operating model, ROI/KPI, decision ask 흐름을 가져가세요.'
+    case 'evidence-deck':
+      return 'deck 프로필: evidence deck. 각 슬라이드는 질문 -> 근거 -> 시사점 구조를 가져가고, strongest signal과 evidence gap을 분명히 보여주세요.'
+    case 'research-presentation':
+      return 'deck 프로필: research presentation. 연구 질문, 배경/방법, findings, discussion, references 흐름을 유지하고 세미나 발표처럼 차분하게 구성하세요.'
+    case 'pitch-deck':
+      return 'deck 프로필: pitch deck. 한 장 한 메시지 원칙을 지키고, 문제-베팅-왜 이기는가-다음 단계로 짧고 강하게 전개하세요.'
+    default:
+      return 'deck 프로필: executive deck. 각 슬라이드는 한 문장 takeaway를 제목으로 쓰고, 2~3개 support bullet만 남겨 메모가 아니라 발표자료처럼 보이게 하세요.'
+  }
+}
+
 const getScholarlyScore = (metadata = {}) => {
   const directScore = Number(metadata?.scholarlyScore)
   if (Number.isFinite(directScore)) return Math.round(directScore)
@@ -206,13 +238,14 @@ const enforceReportMarkdownCitationPolicy = (markdown = '', citationPolicy = {})
   return nextMarkdown || markdown
 }
 
-const refineReportMarkdown = async ({ dossier, instructions, audience, baseMarkdown, citationPolicy }) => {
+const refineReportMarkdown = async ({ dossier, instructions, audience, baseMarkdown, citationPolicy, reportProfile }) => {
   const content = await callTextGeneration({
     systemPrompt: '당신은 증거 기반 전략 보고서 작성자입니다. 반드시 한국어 markdown만 출력하세요. 문체는 paper-like executive memo 형식으로 유지하되, 기존 초안의 섹션 제목과 섹션 순서를 최대한 유지하세요. citation이 강하고 scholar 점수가 높은 학술 근거를 먼저 배치하세요. benchmark/leaderboard, peer-reviewed, 다중 인덱싱, top venue 신호는 강한 보강 근거로 취급하고, Hugging Face upvotes/collections 같은 커뮤니티 신호는 보조 지표로만 사용하세요. 약한 근거는 추가 검증 필요라고 명시하세요. 직접 인용은 제공된 excerpt 범위 안에서만 허용하고, 인용이나 근거 문장 근처에는 원문 링크를 함께 남기세요. URL 없는 문장을 인용문처럼 쓰지 마세요.',
     userPrompt: [
       `주제: ${dossier.topic}`,
       audience ? `독자: ${audience}` : null,
       instructions ? `사용자 요청: ${instructions}` : null,
+      buildReportProfilePrompt(reportProfile),
       `Executive summary: ${dossier.executiveSummary}`,
       `핵심 주장: ${(dossier.claims || []).map((claim) => claim.statement).join(' | ') || '없음'}`,
       `근거 목록:\n${formatEvidenceForPrompt(dossier.evidence) || '없음'}`,
@@ -224,7 +257,7 @@ const refineReportMarkdown = async ({ dossier, instructions, audience, baseMarkd
       '섹션 규칙: 기존 초안의 ## 섹션 제목과 순서를 유지하고, 각 섹션에 배정된 근거는 그 섹션 안에만 남겨두세요.',
       '기존 초안:',
       baseMarkdown,
-      '위 정보를 바탕으로 더 읽기 좋은 최종 보고서 markdown을 다시 작성하세요. 제목 아래에는 메타데이터 bullet을 간단히 두고, 본문은 paper-like 구조를 유지하세요.',
+      '위 정보를 바탕으로 더 읽기 좋은 최종 보고서 markdown을 다시 작성하세요. 단순히 최종 결론을 길게 풀어쓰지 말고, 섹션별 역할이 보이도록 실제 과제물/전략문서처럼 다시 구성하세요.',
     ].filter(Boolean).join('\n\n'),
     maxTokens: 1300,
     temperature: 0.28,
@@ -234,13 +267,14 @@ const refineReportMarkdown = async ({ dossier, instructions, audience, baseMarkd
   return enforceReportMarkdownCitationPolicy(cleanText(content) ? content.trim() : baseMarkdown, citationPolicy)
 }
 
-const refineSlides = async ({ dossier, instructions, audience, baseSlides, citationPolicy }) => {
+const refineSlides = async ({ dossier, instructions, audience, baseSlides, citationPolicy, slideProfile }) => {
   const content = await callTextGeneration({
     systemPrompt: '당신은 임원용 발표자료 설계자입니다. 반드시 JSON 배열만 출력하세요. 각 항목은 {"title":"...","kicker":"...","layout":"hero|split|evidence|metrics|content|closing","bullets":["..."],"citations":["..."]} 형식입니다. 슬라이드는 최대 6장입니다. 기존 초안의 슬라이드 순서와 역할을 최대한 유지하세요. 첫 장은 hero, 마지막 장은 closing을 우선 사용하세요. 가장 강한 학술 근거 1~2개와 그 이유(scholar, benchmark, peer-reviewed 여부, venue tier)를 필요할 때만 드러내세요. 커뮤니티 신호는 보조 정보로만 사용하세요. 인용은 제공된 excerpt 범위 안에서만 쓰고, citations에는 원문 링크를 그대로 남기세요.',
     userPrompt: [
       `주제: ${dossier.topic}`,
       audience ? `청중: ${audience}` : null,
       instructions ? `사용자 요청: ${instructions}` : null,
+      buildSlideProfilePrompt(slideProfile),
       `Executive summary: ${dossier.executiveSummary}`,
       `핵심 주장: ${(dossier.claims || []).map((claim) => claim.statement).join(' | ') || '없음'}`,
       `근거 목록:\n${formatEvidenceForPrompt(dossier.evidence) || '없음'}`,
@@ -250,7 +284,7 @@ const refineSlides = async ({ dossier, instructions, audience, baseSlides, citat
       buildCitationPolicyPrompt(citationPolicy, { artifactType: 'slides' }),
       '구조 규칙: 기존 초안의 슬라이드 제목과 순서를 최대한 유지하고, 슬라이드별 citation 위치를 섞지 마세요.',
       `기존 슬라이드 초안:\n${buildSlideMarkdown(baseSlides)}`,
-      '더 날카롭고 발표하기 쉬운 슬라이드 개요를 JSON 배열로 다시 작성하세요. 각 슬라이드는 실제 발표자료처럼 한 문장 takeaway와 근거 중심 bullets를 유지하세요.',
+      '더 날카롭고 발표하기 쉬운 슬라이드 개요를 JSON 배열로 다시 작성하세요. 보고서 요약본처럼 길게 설명하지 말고, 실제 발표용 headline + support bullets 구조로 다듬으세요.',
     ].filter(Boolean).join('\n\n'),
     maxTokens: 900,
     temperature: 0.32,
@@ -282,6 +316,8 @@ export default async function handler(req, res) {
   const reportCitationVisibility = normalizeCitationControl(body?.reportCitationVisibility)
   const slideCitationMode = normalizeCitationControl(body?.slideCitationMode)
   const slideCitationVisibility = normalizeCitationControl(body?.slideCitationVisibility)
+  const reportStylePreset = normalizeStylePreset(body?.reportStylePreset)
+  const slideStylePreset = normalizeStylePreset(body?.slideStylePreset)
   const consensus = String(body?.consensus || '').slice(0, 4000)
   const messages = sanitizeMessages(body?.messages)
 
@@ -297,8 +333,10 @@ export default async function handler(req, res) {
       slideRequest: mode === 'ppt' || mode === 'both' ? instructions : '',
       reportCitationMode: mode === 'docs' || mode === 'both' ? reportCitationMode : '',
       reportCitationVisibility: mode === 'docs' || mode === 'both' ? reportCitationVisibility : '',
+      reportStylePreset: mode === 'docs' || mode === 'both' ? reportStylePreset : '',
       slideCitationMode: mode === 'ppt' || mode === 'both' ? slideCitationMode : '',
       slideCitationVisibility: mode === 'ppt' || mode === 'both' ? slideCitationVisibility : '',
+      slideStylePreset: mode === 'ppt' || mode === 'both' ? slideStylePreset : '',
     }
     const artifacts = buildDebateArtifacts({ dossier, customization })
 
@@ -309,6 +347,7 @@ export default async function handler(req, res) {
         audience,
         baseMarkdown: artifacts.report.markdown,
         citationPolicy: artifacts.report?.structuredContent?.citationPolicy || artifacts.report?.metadata || {},
+        reportProfile: artifacts.report?.structuredContent?.writingProfile || artifacts.report?.metadata?.profile || '',
       })
       artifacts.report.metadata.generatedWithLlm = true
     }
@@ -320,6 +359,7 @@ export default async function handler(req, res) {
         audience,
         baseSlides: artifacts.slides.structuredContent?.slides || [],
         citationPolicy: artifacts.slides?.structuredContent?.citationPolicy || artifacts.slides?.metadata || {},
+        slideProfile: artifacts.slides?.structuredContent?.deckProfile || artifacts.slides?.metadata?.profile || '',
       })
       const citationPolicy = artifacts.slides?.structuredContent?.citationPolicy || artifacts.slides?.metadata || {}
       const slideCitationLedger = buildSlideCitationLedger(slides, citationPolicy)

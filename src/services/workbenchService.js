@@ -27,8 +27,10 @@ export const generateWorkbenchArtifacts = async ({
   artifacts,
   reportCitationMode,
   reportCitationVisibility,
+  reportStylePreset,
   slideCitationMode,
   slideCitationVisibility,
+  slideStylePreset,
 } = {}) => {
   return await postJson('/api/artifacts/generate', {
     mode,
@@ -41,8 +43,10 @@ export const generateWorkbenchArtifacts = async ({
     artifacts,
     reportCitationMode,
     reportCitationVisibility,
+    reportStylePreset,
     slideCitationMode,
     slideCitationVisibility,
+    slideStylePreset,
   })
 }
 

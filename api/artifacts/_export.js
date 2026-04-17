@@ -77,6 +77,21 @@ const markdownToParagraphs = (markdown = '') => {
   })
 }
 
+const getReportProfileSubtitle = (profile = '') => {
+  switch (cleanText(profile).toLowerCase()) {
+    case 'university-paper':
+      return 'University-style research paper'
+    case 'evidence-analysis':
+      return 'Evidence-based analysis memo'
+    case 'executive-brief':
+      return 'Executive decision brief'
+    case 'concept-note':
+      return 'Concept note'
+    default:
+      return 'AI Gods Research Brief'
+  }
+}
+
 const buildArtifactEvidenceLabel = (item = {}, { compact = false } = {}) => {
   const metadata = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {}
   const authors = Array.isArray(metadata.authors) ? metadata.authors.slice(0, compact ? 2 : 3).join(', ') : ''
@@ -128,6 +143,7 @@ const buildReportSectionParagraphs = (section = {}) => {
 
 const buildReportDocChildren = ({ title, artifact, markdown }) => {
   const structured = artifact?.structuredContent && typeof artifact.structuredContent === 'object' ? artifact.structuredContent : {}
+  const reportProfile = cleanText(structured.writingProfile || artifact?.metadata?.profile || '')
   const reportSections = Array.isArray(structured.reportSections) ? structured.reportSections : []
   const claims = Array.isArray(structured.claims) ? structured.claims : []
   const evidence = Array.isArray(structured.evidence) ? structured.evidence : []
@@ -146,7 +162,7 @@ const buildReportDocChildren = ({ title, artifact, markdown }) => {
       spacing: { after: 160 },
     }),
     new Paragraph({
-      children: [new TextRun({ text: 'AI Gods Research Brief', bold: true, color: '5B6472' })],
+      children: [new TextRun({ text: getReportProfileSubtitle(reportProfile), bold: true, color: '5B6472' })],
       alignment: AlignmentType.CENTER,
       spacing: { after: 120 },
     }),
@@ -549,10 +565,11 @@ const shouldRenderSlideCitations = ({ slideData = {}, slideIndex = 0, slides = [
 
 const buildDocxBuffer = async ({ title, markdown, artifact }) => {
   const hasStructuredReport = Boolean(artifact?.structuredContent?.topic)
+  const preferMarkdownRendering = Boolean(artifact?.metadata?.generatedWithLlm && cleanText(markdown || ''))
   const doc = new Document({
     sections: [
       {
-        children: hasStructuredReport
+        children: hasStructuredReport && !preferMarkdownRendering
           ? buildReportDocChildren({ title, artifact, markdown })
           : [
             new Paragraph({ text: cleanText(title || 'AI Gods Export'), heading: HeadingLevel.TITLE }),

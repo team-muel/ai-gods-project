@@ -437,6 +437,144 @@ const buildArtifactCitationPolicy = ({ request = '', artifactType = 'report', fe
   }
 }
 
+const normalizeArtifactPreset = (value = '') => cleanText(value).toLowerCase().replace(/[^a-z-]/g, '')
+
+const REPORT_PROFILE_BY_PRESET = {
+  research: 'university-paper',
+  analysis: 'evidence-analysis',
+  brief: 'executive-brief',
+  ideation: 'concept-note',
+}
+
+const SLIDE_PROFILE_BY_PRESET = {
+  investor: 'investor-deck',
+  evidence: 'evidence-deck',
+  research: 'research-presentation',
+  pitch: 'pitch-deck',
+}
+
+const UNIVERSITY_ASSIGNMENT_PATTERN = /(대학교|대학|과제|리포트|레포트|보고서 과제|발제문|논문|essay|term paper|research paper|seminar|세미나|교수|academic paper|literature review)/i
+const EXECUTIVE_AUDIENCE_PATTERN = /(경영진|임원|executive|leadership|board|이사회|management|c-suite)/i
+const INVESTOR_AUDIENCE_PATTERN = /(투자자|investor|vc|venture|fund|ir|board deck|이사회)/i
+const PITCH_ASSIGNMENT_PATTERN = /(pitch|피치|storyline|스토리라인|sales deck|proposal deck|영업 발표|제안 발표)/i
+const RESEARCH_PRESENTATION_PATTERN = /(연구발표|세미나 발표|학회 발표|research presentation|seminar presentation|colloquium)/i
+
+const detectArtifactProfile = ({ artifactType = 'report', request = '', audience = '', citationPolicy = {}, presetId = '' } = {}) => {
+  const normalizedPreset = normalizeArtifactPreset(presetId)
+  const requestText = cleanText(request)
+  const audienceText = cleanText(audience)
+  const combined = `${requestText} ${audienceText}`.trim()
+
+  if (artifactType === 'report') {
+    if (REPORT_PROFILE_BY_PRESET[normalizedPreset]) return REPORT_PROFILE_BY_PRESET[normalizedPreset]
+    if (UNIVERSITY_ASSIGNMENT_PATTERN.test(combined)) return 'university-paper'
+    if (citationPolicy.assignmentType === 'ideation' || citationPolicy.mode === 'none') return 'concept-note'
+    if (citationPolicy.assignmentType === 'research' && citationPolicy.mode === 'strict') return 'university-paper'
+    if (EXECUTIVE_AUDIENCE_PATTERN.test(combined) || INVESTOR_AUDIENCE_PATTERN.test(combined) || citationPolicy.assignmentType === 'briefing' || citationPolicy.assignmentType === 'execution') {
+      return 'executive-brief'
+    }
+    if (citationPolicy.assignmentType === 'research' || citationPolicy.mode === 'selective') return 'evidence-analysis'
+    return 'executive-brief'
+  }
+
+  if (SLIDE_PROFILE_BY_PRESET[normalizedPreset]) return SLIDE_PROFILE_BY_PRESET[normalizedPreset]
+  if (PITCH_ASSIGNMENT_PATTERN.test(combined) || citationPolicy.mode === 'none') return 'pitch-deck'
+  if (RESEARCH_PRESENTATION_PATTERN.test(combined) || UNIVERSITY_ASSIGNMENT_PATTERN.test(combined) || (citationPolicy.assignmentType === 'research' && citationPolicy.mode === 'strict')) {
+    return 'research-presentation'
+  }
+  if (INVESTOR_AUDIENCE_PATTERN.test(combined) || EXECUTIVE_AUDIENCE_PATTERN.test(combined) || citationPolicy.assignmentType === 'briefing' || citationPolicy.assignmentType === 'execution') {
+    return 'investor-deck'
+  }
+  if (citationPolicy.assignmentType === 'research' || citationPolicy.mode === 'selective') return 'evidence-deck'
+  return 'executive-deck'
+}
+
+const buildReportProfileSpecs = ({ profile = 'executive-brief', includeReferences = true } = {}) => {
+  const templates = {
+    'university-paper': [
+      { title: '문제 제기', category: 'question' },
+      { title: '이론적 배경', category: 'background' },
+      { title: '분석 프레임', category: 'methodology' },
+      { title: '핵심 분석', category: 'analysis' },
+      { title: '결론 및 제언', category: 'conclusion' },
+    ],
+    'evidence-analysis': [
+      { title: '과제 개요', category: 'abstract' },
+      { title: '핵심 질문', category: 'question' },
+      { title: '근거 비교 분석', category: 'analysis' },
+      { title: '리스크와 한계', category: 'risk' },
+      { title: '권고안', category: 'recommendation' },
+    ],
+    'executive-brief': [
+      { title: 'Executive Summary', category: 'abstract' },
+      { title: 'Why Now', category: 'background' },
+      { title: 'Decision Drivers', category: 'analysis' },
+      { title: 'Recommended Actions', category: 'recommendation' },
+      { title: 'Risks & Assumptions', category: 'risk' },
+    ],
+    'concept-note': [
+      { title: '핵심 제안', category: 'abstract' },
+      { title: '배경과 문제', category: 'background' },
+      { title: '메시지 구조', category: 'analysis' },
+      { title: '활용 시나리오', category: 'case-study' },
+      { title: '다음 단계', category: 'conclusion' },
+    ],
+  }
+
+  const base = templates[profile] || templates['executive-brief']
+  return includeReferences
+    ? [...base, { title: profile === 'executive-brief' ? 'Appendix / Sources' : '참고문헌', category: 'references' }]
+    : base
+}
+
+const buildSlideProfileSpecs = ({ profile = 'executive-deck', includeReferences = true, title = '' } = {}) => {
+  const leadTitle = cleanText(title || 'AI Gods Deck')
+  const templates = {
+    'investor-deck': [
+      { title: leadTitle, category: 'abstract' },
+      { title: 'Why Now', category: 'background' },
+      { title: 'Problem / Opportunity', category: 'analysis' },
+      { title: 'Strategy & Operating Model', category: 'recommendation' },
+      { title: 'ROI / KPI', category: 'metrics' },
+    ],
+    'evidence-deck': [
+      { title: leadTitle, category: 'abstract' },
+      { title: 'Decision Question', category: 'question' },
+      { title: 'What Evidence Says', category: 'analysis' },
+      { title: 'Strongest Signals', category: 'metrics' },
+      { title: 'Risks / Gaps', category: 'risk' },
+    ],
+    'research-presentation': [
+      { title: leadTitle, category: 'abstract' },
+      { title: 'Research Question', category: 'question' },
+      { title: 'Background & Method', category: 'methodology' },
+      { title: 'Findings', category: 'analysis' },
+      { title: 'Discussion', category: 'risk' },
+    ],
+    'pitch-deck': [
+      { title: leadTitle, category: 'abstract' },
+      { title: 'The Problem', category: 'background' },
+      { title: 'The Bet', category: 'analysis' },
+      { title: 'Why It Wins', category: 'metrics' },
+      { title: 'Next Step', category: 'conclusion' },
+    ],
+    'executive-deck': [
+      { title: leadTitle, category: 'abstract' },
+      { title: 'Why This Matters', category: 'background' },
+      { title: 'Current Reality', category: 'analysis' },
+      { title: 'Recommended Move', category: 'recommendation' },
+      { title: 'Risk & Guardrails', category: 'risk' },
+    ],
+  }
+
+  const base = templates[profile] || templates['executive-deck']
+  if (!includeReferences) {
+    return base.concat(profile === 'pitch-deck' ? [] : [{ title: 'Next Step', category: 'conclusion' }]).slice(0, 6)
+  }
+
+  return [...base, { title: profile === 'investor-deck' ? 'Appendix / Sources' : 'References', category: 'references' }].slice(0, 6)
+}
+
 const REPORT_CITATION_REQUIREMENTS = {
   strict: { required: ['background', 'analysis', 'metrics', 'case-study', 'findings', 'risk'], optional: ['abstract', 'question', 'recommendation', 'conclusion'] },
   selective: { required: ['analysis', 'metrics', 'case-study'], optional: ['background', 'findings', 'risk'] },
@@ -552,8 +690,27 @@ const buildOutlineEntries = ({ titles = [], artifactType = 'report', requestKeyw
   }
 })
 
+const buildOutlineEntriesFromSpecs = ({ specs = [], artifactType = 'report', requestKeywords = [] } = {}) => (Array.isArray(specs) ? specs : []).map((spec, index, array) => {
+  const title = typeof spec === 'string' ? spec : spec?.title || `${artifactType === 'slides' ? 'Slide' : 'Section'} ${index + 1}`
+  const category = typeof spec === 'string'
+    ? detectOutlineCategory(title, { artifactType, index, total: array.length })
+    : cleanText(spec?.category || '') || detectOutlineCategory(title, { artifactType, index, total: array.length })
+
+  return {
+    id: `${artifactType === 'slides' ? 'slide' : 'section'}-${index + 1}`,
+    title,
+    category,
+    keywords: uniqueSlideTexts([
+      ...extractKeywordsFromText(title),
+      ...requestKeywords.slice(0, 4),
+    ]),
+    maxEvidence: Number(spec?.maxEvidence || getDefaultEvidenceLimit(category, { artifactType })),
+  }
+})
+
 const buildReportSectionBlueprint = (dossier = {}, customization = {}) => {
   const request = cleanText(customization.reportRequest || '')
+  const audience = cleanText(customization.audience || '')
   const requestKeywords = extractKeywordsFromText(request)
   const features = buildAssignmentFeatures(request)
   const explicitTitles = extractExplicitOutlineTitles(request, { artifactType: 'report', maxItems: 6 })
@@ -565,23 +722,45 @@ const buildReportSectionBlueprint = (dossier = {}, customization = {}) => {
     explicitMode: customization.reportCitationMode,
     explicitVisibility: customization.reportCitationVisibility,
   })
+  const profile = detectArtifactProfile({
+    artifactType: 'report',
+    request,
+    audience,
+    citationPolicy,
+    presetId: customization.reportStylePreset,
+  })
 
   let titles = []
+  let specs = []
   let source = 'derived'
 
   if (explicitTitles.length >= 2) {
     titles = explicitTitles
     source = 'explicit'
-  } else if (features.wantsComparison) {
-    titles = ['과제 개요', '비교 기준', '핵심 비교 분석', '권고안', '참고문헌']
-  } else if (features.wantsCases) {
-    titles = ['과제 개요', '문제 배경', '핵심 사례와 근거', '시사점', '참고문헌']
-  } else if (features.wantsExecution) {
-    titles = ['과제 개요', '문제 정의', '근거 기반 분석', '실행 방안', '리스크 및 검증 과제', '참고문헌']
-  } else if (features.wantsMetrics) {
-    titles = ['과제 개요', '핵심 지표', '근거 기반 해석', '시사점 및 제언', '참고문헌']
   } else {
-    titles = ['과제 개요', '핵심 쟁점', '근거 기반 분석', '시사점 및 제언', '참고문헌']
+    specs = buildReportProfileSpecs({
+      profile,
+      includeReferences: citationPolicy.includeReferences,
+    })
+    if (features.wantsComparison && profile === 'evidence-analysis') {
+      specs = [
+        { title: '과제 개요', category: 'abstract' },
+        { title: '비교 기준', category: 'question' },
+        { title: '대안 비교 분석', category: 'analysis' },
+        { title: '리스크와 한계', category: 'risk' },
+        { title: '권고안', category: 'recommendation' },
+        ...(citationPolicy.includeReferences ? [{ title: '참고문헌', category: 'references' }] : []),
+      ]
+    } else if (features.wantsCases && profile !== 'executive-brief') {
+      specs = [
+        { title: '과제 개요', category: 'abstract' },
+        { title: profile === 'university-paper' ? '이론적 배경' : '문제 배경', category: 'background' },
+        { title: '핵심 사례와 근거', category: 'case-study' },
+        { title: '시사점 및 한계', category: 'risk' },
+        { title: profile === 'university-paper' ? '결론 및 제언' : '권고안', category: profile === 'university-paper' ? 'conclusion' : 'recommendation' },
+        ...(citationPolicy.includeReferences ? [{ title: profile === 'executive-brief' ? 'Appendix / Sources' : '참고문헌', category: 'references' }] : []),
+      ]
+    }
   }
 
   const hasReferenceSection = titles.some((title) => /참고문헌|references|bibliography|출처/i.test(cleanText(title)))
@@ -595,9 +774,12 @@ const buildReportSectionBlueprint = (dossier = {}, customization = {}) => {
 
   return {
     source,
+    profile,
     citationPolicy,
     sections: applyCitationPolicyToOutlineItems({
-      items: buildOutlineEntries({ titles: titles.slice(0, 6), artifactType: 'report', requestKeywords }),
+      items: source === 'explicit'
+        ? buildOutlineEntries({ titles: titles.slice(0, 6), artifactType: 'report', requestKeywords })
+        : buildOutlineEntriesFromSpecs({ specs: specs.slice(0, 6), artifactType: 'report', requestKeywords }),
       artifactType: 'report',
       policy: citationPolicy,
     }),
@@ -606,6 +788,7 @@ const buildReportSectionBlueprint = (dossier = {}, customization = {}) => {
 
 const buildSlideBlueprint = (dossier = {}, customization = {}) => {
   const request = cleanText(customization.slideRequest || '')
+  const audience = cleanText(customization.audience || '')
   const requestKeywords = extractKeywordsFromText(request)
   const features = buildAssignmentFeatures(request)
   const requestedCount = parseRequestedSlideCount(request) || 6
@@ -618,23 +801,36 @@ const buildSlideBlueprint = (dossier = {}, customization = {}) => {
     explicitMode: customization.slideCitationMode,
     explicitVisibility: customization.slideCitationVisibility,
   })
+  const profile = detectArtifactProfile({
+    artifactType: 'slides',
+    request,
+    audience,
+    citationPolicy,
+    presetId: customization.slideStylePreset,
+  })
 
   let titles = []
+  let specs = []
   let source = 'derived'
 
   if (explicitTitles.length >= 2) {
     titles = explicitTitles.slice(0, requestedCount)
     source = 'explicit'
-  } else if (features.wantsComparison) {
-    titles = [customization.slideTitle || dossier.topic, '비교 기준', '핵심 비교 분석', '권고안', 'Next Action']
-  } else if (features.wantsCases) {
-    titles = [customization.slideTitle || dossier.topic, '문제 배경', '핵심 사례', '근거가 강한 포인트', '시사점', 'Next Action']
-  } else if (features.wantsExecution) {
-    titles = [customization.slideTitle || dossier.topic, '문제 정의', '핵심 근거', '실행 방안', '리스크 및 조건', 'Next Action']
-  } else if (features.wantsMetrics) {
-    titles = [customization.slideTitle || dossier.topic, '핵심 지표', '근거가 강한 포인트', '시사점', 'Next Action']
   } else {
-    titles = [customization.slideTitle || dossier.topic, '핵심 쟁점', '근거가 강한 포인트', '핵심 지표', '권고안', '다음 단계']
+    specs = buildSlideProfileSpecs({
+      profile,
+      includeReferences: citationPolicy.includeReferences && citationPolicy.preferReferenceSlide,
+      title: customization.slideTitle || dossier.topic,
+    })
+    if (features.wantsComparison && profile !== 'pitch-deck') {
+      specs = [
+        { title: customization.slideTitle || dossier.topic, category: 'abstract' },
+        { title: 'Comparison Frame', category: 'question' },
+        { title: 'Alternative A vs B', category: 'analysis' },
+        { title: 'Trade-offs', category: 'risk' },
+        { title: citationPolicy.includeReferences && citationPolicy.preferReferenceSlide ? 'References' : 'Decision / Next Step', category: citationPolicy.includeReferences && citationPolicy.preferReferenceSlide ? 'references' : 'conclusion' },
+      ]
+    }
   }
 
   if (source === 'derived' && features.wantsNextAction && titles.length > 0) {
@@ -652,9 +848,12 @@ const buildSlideBlueprint = (dossier = {}, customization = {}) => {
 
   return {
     source,
+    profile,
     citationPolicy,
     slides: applyCitationPolicyToOutlineItems({
-      items: buildOutlineEntries({ titles: titles.slice(0, requestedCount), artifactType: 'slides', requestKeywords }),
+      items: source === 'explicit'
+        ? buildOutlineEntries({ titles: titles.slice(0, requestedCount), artifactType: 'slides', requestKeywords })
+        : buildOutlineEntriesFromSpecs({ specs: specs.slice(0, requestedCount), artifactType: 'slides', requestKeywords }),
       artifactType: 'slides',
       policy: citationPolicy,
     }),
@@ -911,6 +1110,7 @@ const buildReportSections = (dossier = {}, customization = {}) => {
 
   return {
     source: blueprint.source,
+    profile: blueprint.profile,
     citationPolicy: blueprint.citationPolicy,
     sections: assignedSections.map((section) => ({
       ...section,
@@ -989,7 +1189,19 @@ const buildRoadmapBullets = ({ dossier, disagreementPoints = [] } = {}) => {
   ]).slice(0, 3)
 }
 
-const getSlideLayoutForCategory = (category = 'analysis', index = 0, total = 1) => {
+const getSlideLayoutForCategory = (category = 'analysis', index = 0, total = 1, profile = '') => {
+  if (profile === 'research-presentation') {
+    if (category === 'methodology') return 'split'
+    if (category === 'analysis') return 'evidence'
+    if (category === 'risk' || category === 'conclusion') return 'closing'
+  }
+
+  if (profile === 'investor-deck' || profile === 'executive-deck') {
+    if (category === 'recommendation') return 'roadmap'
+    if (category === 'metrics') return 'metrics'
+    if (category === 'references') return 'evidence'
+  }
+
   switch (category) {
     case 'abstract':
       return index === 0 ? 'hero' : 'split'
@@ -1013,7 +1225,34 @@ const getSlideLayoutForCategory = (category = 'analysis', index = 0, total = 1) 
   }
 }
 
-const getSlideAccentForCategory = (category = 'analysis') => {
+const getSlideAccentForCategory = (category = 'analysis', profile = '') => {
+  if (profile === 'investor-deck') {
+    switch (category) {
+      case 'abstract': return 'slate'
+      case 'background': return 'cobalt'
+      case 'analysis': return 'amber'
+      case 'metrics': return 'emerald'
+      case 'recommendation': return 'teal'
+      case 'risk':
+      case 'conclusion':
+      case 'references': return 'slate'
+      default: return 'teal'
+    }
+  }
+
+  if (profile === 'research-presentation') {
+    switch (category) {
+      case 'abstract': return 'cobalt'
+      case 'background': return 'slate'
+      case 'methodology': return 'teal'
+      case 'analysis': return 'amber'
+      case 'risk':
+      case 'conclusion': return 'rose'
+      case 'references': return 'slate'
+      default: return 'teal'
+    }
+  }
+
   switch (category) {
     case 'abstract': return 'emerald'
     case 'background':
@@ -1029,7 +1268,44 @@ const getSlideAccentForCategory = (category = 'analysis') => {
   }
 }
 
-const getSlideKickerForCategory = (category = 'analysis') => {
+const getSlideKickerForCategory = (category = 'analysis', profile = '') => {
+  if (profile === 'investor-deck') {
+    switch (category) {
+      case 'abstract': return 'Board / Investor View'
+      case 'background': return 'Why now'
+      case 'analysis': return 'Opportunity frame'
+      case 'metrics': return 'Economics / KPI'
+      case 'recommendation': return 'Operating move'
+      case 'risk': return 'Risk / guardrails'
+      case 'references': return 'Appendix / sources'
+      default: return 'Decision support'
+    }
+  }
+
+  if (profile === 'research-presentation') {
+    switch (category) {
+      case 'abstract': return 'Seminar opening'
+      case 'question': return 'Research question'
+      case 'background': return 'Background'
+      case 'methodology': return 'Method'
+      case 'analysis': return 'Findings'
+      case 'risk': return 'Discussion'
+      case 'references': return 'Source trail'
+      default: return 'Research flow'
+    }
+  }
+
+  if (profile === 'pitch-deck') {
+    switch (category) {
+      case 'abstract': return 'Core story'
+      case 'background': return 'Pain'
+      case 'analysis': return 'Promise'
+      case 'metrics': return 'Why it wins'
+      case 'conclusion': return 'Next move'
+      default: return 'Narrative deck'
+    }
+  }
+
   switch (category) {
     case 'abstract': return 'Debate -> Dossier -> Deck'
     case 'background': return 'Context'
@@ -1049,6 +1325,7 @@ const buildSlidePlan = (dossier = {}, customization = {}) => {
   const blueprint = buildSlideBlueprint(dossier, customization)
   return {
     source: blueprint.source,
+    profile: blueprint.profile,
     citationPolicy: blueprint.citationPolicy,
     slides: assignEvidenceToOutlineItems({
       items: blueprint.slides,
@@ -1216,9 +1493,14 @@ const buildScholarlySignalLines = (scholarlySummary = {}) => {
 const buildReportMarkdown = (dossier, customization = {}, reportPlanInput = null) => {
   const reportPlan = reportPlanInput || buildReportSections(dossier, customization)
   const reportCitationLedger = buildReportCitationLedger(reportPlan.sections, reportPlan.citationPolicy)
+  const useParagraphSections = reportPlan.profile === 'university-paper'
   const reportSectionsMarkdown = reportPlan.sections.flatMap((section) => [
     `## ${section.title}`,
-    markdownBulletList(section.summaryBullets, '- 내용 없음'),
+    useParagraphSections
+      ? (Array.isArray(section.summaryBullets) && section.summaryBullets.length > 0
+        ? section.summaryBullets.map((line) => cleanText(line)).filter(Boolean).join('\n\n')
+        : '내용 없음')
+      : markdownBulletList(section.summaryBullets, '- 내용 없음'),
     section.evidenceLines.length > 0 ? '' : null,
     section.evidenceLines.length > 0 ? '### Citations' : null,
     section.evidenceLines.length > 0 ? markdownBulletList(section.evidenceLines, '- 섹션별 인용 없음') : null,
@@ -1234,6 +1516,7 @@ const buildReportMarkdown = (dossier, customization = {}, reportPlanInput = null
     `- 준비도: ${dossier.readinessScore || 0}/100`,
     customization.audience ? `- 독자: ${customization.audience}` : null,
     customization.reportRequest ? `- 사용자 요청: ${customization.reportRequest}` : null,
+    reportPlan.profile ? `- 작성 프로필: ${reportPlan.profile}` : null,
     `- 섹션 설계: ${reportPlan.source === 'explicit' ? '사용자 지정 과제 파트 반영' : '요청 기반 자동 설계'}`,
     reportPlan.citationPolicy ? `- 인용 정책: ${reportPlan.citationPolicy.mode} / ${reportPlan.citationPolicy.visibility}` : null,
     '',
@@ -1281,6 +1564,7 @@ const buildSlideOutline = (dossier, customization = {}, slidePlanInput = null) =
     dossier.nextStep ? `Next · ${cleanStrategicText(dossier.nextStep, 84)}` : '',
   ]).slice(0, 3)
   const emphasizeEvidence = ['strict', 'selective'].includes(slidePolicy.mode)
+  const slideProfile = slidePlan.profile || 'executive-deck'
   const generalMetricHighlights = [
     { value: `${dossier.readinessScore || 0}/100`, label: 'Readiness', note: '논점 정리와 실행 준비도' },
     { value: `${claimCount}`, label: 'Claims', note: '핵심 주장 수' },
@@ -1357,18 +1641,35 @@ const buildSlideOutline = (dossier, customization = {}, slidePlanInput = null) =
         break
       case 'background':
       case 'question':
-        bullets = uniqueSlideTexts([
-          `주제 · ${dossier.topic}`,
-          customization.slideRequest ? `요청 · ${compactSlideText(customization.slideRequest, 88)}` : '',
-          topClaims[0] ? `쟁점 · ${topClaims[0]}` : '',
-          participantSummaries[0] ? `관점 · ${participantSummaries[0]}` : '',
-          evidenceBullets[0] ? `근거 · ${evidenceBullets[0]}` : '',
-        ]).slice(0, 3)
+        bullets = slideProfile === 'investor-deck'
+          ? uniqueSlideTexts([
+            plan.category === 'background' ? `Why now · ${compactSlideText(dossier.executiveSummary || dossier.topic, 96)}` : '',
+            topClaims[0] ? `Opportunity · ${topClaims[0]}` : '',
+            participantSummaries[0] ? `Signal · ${participantSummaries[0]}` : '',
+            evidenceBullets[0] ? `Proof · ${evidenceBullets[0]}` : '',
+          ]).slice(0, 3)
+          : uniqueSlideTexts([
+            `주제 · ${dossier.topic}`,
+            customization.slideRequest ? `요청 · ${compactSlideText(customization.slideRequest, 88)}` : '',
+            topClaims[0] ? `쟁점 · ${topClaims[0]}` : '',
+            participantSummaries[0] ? `관점 · ${participantSummaries[0]}` : '',
+            evidenceBullets[0] ? `근거 · ${evidenceBullets[0]}` : '',
+          ]).slice(0, 3)
         highlights = participantHighlights.length > 0 ? participantHighlights : [
           { value: `${claimCount}`, label: '핵심 주장' },
           { value: `${actionCount}`, label: '실행 항목' },
         ]
         quote = consensusPoints[0] || executiveSummaryLine || ''
+        break
+      case 'methodology':
+        bullets = uniqueSlideTexts([
+          'Debate -> dossier -> artifact 흐름으로 논점을 구조화했습니다.',
+          emphasizeEvidence ? '학술 신호와 citation score를 우선 반영했습니다.' : '핵심 주장과 실행 포인트를 먼저 정리했습니다.',
+          customization.slideRequest ? `과제 조건 · ${compactSlideText(customization.slideRequest, 86)}` : '',
+          evidenceBullets[0] ? `대표 근거 · ${evidenceBullets[0]}` : '',
+        ]).slice(0, 3)
+        highlights = emphasizeEvidence ? metricHighlights.slice(0, 3) : generalMetricHighlights.slice(0, 3)
+        quote = executiveSummaryLine || ''
         break
       case 'analysis':
       case 'findings':
@@ -1405,11 +1706,17 @@ const buildSlideOutline = (dossier, customization = {}, slidePlanInput = null) =
         quote = citationItems[0] ? buildSlideEvidenceQuote(citationItems[0]) : ''
         break
       case 'recommendation':
-        bullets = uniqueSlideTexts([
-          ...roadmapBullets,
-          ...actionBullets.slice(0, 2),
-          evidenceBullets[0] ? `근거 · ${evidenceBullets[0]}` : '',
-        ]).slice(0, 3)
+        bullets = slideProfile === 'investor-deck'
+          ? uniqueSlideTexts([
+            ...roadmapBullets.map((line) => line.replace(/^\[[^\]]+\]\s*/, '')),
+            actionBullets[0] ? `Decision ask · ${actionBullets[0]}` : '',
+            evidenceBullets[0] ? `Proof · ${evidenceBullets[0]}` : '',
+          ]).slice(0, 3)
+          : uniqueSlideTexts([
+            ...roadmapBullets,
+            ...actionBullets.slice(0, 2),
+            evidenceBullets[0] ? `근거 · ${evidenceBullets[0]}` : '',
+          ]).slice(0, 3)
         highlights = roadmapHighlights
         footer = dossier.nextStep ? `다음 단계 · ${cleanStrategicText(dossier.nextStep, 88)}` : ''
         break
@@ -1447,9 +1754,9 @@ const buildSlideOutline = (dossier, customization = {}, slidePlanInput = null) =
     return {
       title: plan.title,
       category: plan.category,
-      kicker: getSlideKickerForCategory(plan.category),
-      layout: getSlideLayoutForCategory(plan.category, index, array.length),
-      accent: getSlideAccentForCategory(plan.category),
+      kicker: getSlideKickerForCategory(plan.category, slideProfile),
+      layout: getSlideLayoutForCategory(plan.category, index, array.length, slideProfile),
+      accent: getSlideAccentForCategory(plan.category, slideProfile),
       citationRequirement: plan.citationRequirement,
       citationDisplay: plan.citationDisplay,
       bullets: bullets.length > 0 ? bullets : ['핵심 메시지 없음'],
@@ -1487,7 +1794,13 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
 
   const report = {
     artifactType: 'report_markdown',
-    title: customization.reportTitle || `${truncate(dossier.topic, 80)} 보고서`,
+    title: customization.reportTitle || (reportPlan.profile === 'university-paper'
+      ? `${truncate(dossier.topic, 80)} 과제 보고서`
+      : reportPlan.profile === 'executive-brief'
+        ? `${truncate(dossier.topic, 80)} Executive Brief`
+        : reportPlan.profile === 'concept-note'
+          ? `${truncate(dossier.topic, 80)} 콘셉트 노트`
+          : `${truncate(dossier.topic, 80)} 분석 보고서`),
     format: 'markdown',
     status: 'ready',
     markdown: reportMarkdown,
@@ -1502,6 +1815,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       citationSummary: dossier.citationSummary || null,
       citationLedger: reportCitationLedger,
       citationPolicy: reportPlan.citationPolicy,
+      writingProfile: reportPlan.profile,
       scholarlySummary: dossier.scholarlySummary || null,
     },
     metadata: {
@@ -1511,6 +1825,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       citationLedgerCount: reportCitationLedger.length,
       citationMode: reportPlan.citationPolicy?.mode || null,
       citationVisibility: reportPlan.citationPolicy?.visibility || null,
+      profile: reportPlan.profile,
       sectionCount: reportPlan.sections.length,
       planSource: reportPlan.source,
       source: 'dossier_report_builder',
@@ -1521,7 +1836,15 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
 
   const slides = {
     artifactType: 'slide_outline',
-    title: customization.slideTitle || `${truncate(dossier.topic, 80)} 발표자료`,
+    title: customization.slideTitle || (slidePlan.profile === 'investor-deck'
+      ? `${truncate(dossier.topic, 80)} Investor Deck`
+      : slidePlan.profile === 'research-presentation'
+        ? `${truncate(dossier.topic, 80)} Research Presentation`
+        : slidePlan.profile === 'pitch-deck'
+          ? `${truncate(dossier.topic, 80)} Pitch Deck`
+          : slidePlan.profile === 'evidence-deck'
+            ? `${truncate(dossier.topic, 80)} Evidence Deck`
+            : `${truncate(dossier.topic, 80)} Executive Deck`),
     format: 'markdown',
     status: 'ready',
     markdown: slideMarkdown,
@@ -1529,6 +1852,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       topic: dossier.topic,
       slides: slideOutline,
       slidePlanSource: slidePlan.source,
+      deckProfile: slidePlan.profile,
       citationSummary: dossier.citationSummary || null,
       citationLedger: slideCitationLedger,
       citationPolicy: slidePlan.citationPolicy,
@@ -1541,6 +1865,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       citationLedgerCount: slideCitationLedger.length,
       citationMode: slidePlan.citationPolicy?.mode || null,
       citationVisibility: slidePlan.citationPolicy?.visibility || null,
+      profile: slidePlan.profile,
       planSource: slidePlan.source,
       source: 'dossier_slide_builder',
       audience: customization.audience || null,

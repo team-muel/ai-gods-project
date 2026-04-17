@@ -302,10 +302,12 @@ export default function QuestionPanel({ onOpenDashboard }) {
       ? {
         reportCitationMode: docsCitationMode,
         reportCitationVisibility: docsCitationVisibility,
+        reportStylePreset: activeDocsCitationPreset?.id || '',
       }
       : {
         slideCitationMode: pptCitationMode,
         slideCitationVisibility: pptCitationVisibility,
+        slideStylePreset: activePptCitationPreset?.id || '',
       };
 
     setArtifactBusy((state) => ({ ...state, [mode]: true }));
