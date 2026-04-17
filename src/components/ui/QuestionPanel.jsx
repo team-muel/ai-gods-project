@@ -68,7 +68,6 @@ const LAYOUT_PRESET_OPTIONS = [
 const LANGUAGE_OPTIONS = [
   { id: 'ko', label: '한국어' },
   { id: 'en', label: 'English' },
-  { id: 'ko-en', label: '한영 병기' },
 ];
 
 const VISUAL_PRESET_OPTIONS = [
@@ -267,6 +266,7 @@ const OUTLINE_PRESETS = {
 
 const DEFAULT_DOC_BRIEF = {
   overview: '',
+  userRole: '',
   audience: '경영진',
   domain: 'it',
   theme: 'business',
@@ -287,6 +287,7 @@ const DEFAULT_DOC_BRIEF = {
 
 const DEFAULT_PPT_BRIEF = {
   overview: '',
+  userRole: '',
   audience: '투자자 / 경영진',
   domain: 'it',
   theme: 'pitch',
@@ -535,6 +536,87 @@ const buildSuggestedPapersForPlan = ({ plan = {}, paperPool = [], overview = '' 
     .map((entry) => entry.paper);
 };
 
+const hashString = (value = '') => Array.from(String(value)).reduce((hash, char) => (((hash * 31) + char.charCodeAt(0)) >>> 0), 2166136261);
+
+const createSeededRandom = (seedValue = 1) => {
+  let seed = (seedValue >>> 0) || 1;
+  return () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+};
+
+const pickFromPool = (pool = [], random = Math.random) => pool[Math.floor(random() * pool.length)] || '';
+
+const buildPromptRecommendations = (mode, brief = {}, refreshKey = 0) => {
+  const overview = cleanText(brief.overview);
+  const domainEntry = getDomainEntry(brief.domain);
+  const userRole = cleanText(brief.userRole);
+  const audience = cleanText(brief.audience) || (mode === 'docs' ? '독자' : '청중');
+  const language = brief.language === 'en' ? 'English' : '한국어';
+  const topic = overview || `${domainEntry.label} 주제`;
+  const rolePhrase = userRole ? `${userRole}의 관점에서` : `${audience} 기준으로`;
+  const languagePhrase = brief.language === 'en' ? '최종 결과물은 영어로 구성하고' : '최종 결과물은 한국어로 구성하고';
+  const seed = hashString(`${mode}:${topic}:${brief.domain}:${userRole}:${audience}:${brief.language}:${refreshKey}`);
+  const random = createSeededRandom(seed);
+
+  const docFrames = [
+    '전략 메모',
+    '분석 보고서',
+    '브리프 문서',
+    '리서치 노트',
+    '정리 문서',
+    '과제형 보고서',
+  ];
+  const pptFrames = [
+    '발표 deck',
+    '설득형 발표자료',
+    '요약 발표자료',
+    '브리핑 슬라이드',
+    '세미나 deck',
+    '제안 발표자료',
+  ];
+  const angles = [
+    '핵심 메시지가 먼저 보이도록 재구성하고',
+    '배경보다 판단과 시사점이 먼저 보이게 만들고',
+    '불필요한 설명을 줄이고 결정 포인트 중심으로 정리하고',
+    '독자가 바로 이해할 수 있게 맥락과 결론을 선명히 나누고',
+    '사례와 근거를 구분해서 읽히게 만들고',
+    '도입, 핵심 분석, 마무리 흐름이 또렷하게 보이게 설계하고',
+  ];
+  const evidenceBits = [
+    '필요한 부분에만 논문 인용을 붙이기',
+    '핵심 주장마다 근거가 보이게 구성하기',
+    '사례와 데이터 출처를 섞지 않고 정리하기',
+    '리뷰 논문과 최신 사례를 함께 엮기',
+    '인용은 선택적으로 쓰되 근거가 약한 부분은 비워두기',
+    '논문과 기사 출처를 분리해서 제시하기',
+  ];
+  const structureBits = mode === 'ppt'
+    ? ['문제-근거-시사점 흐름으로', '질문-해석-결론 구조로', '오프닝-핵심 장면-마무리 순서로', '배경-핵심 포인트-다음 단계 순서로']
+    : ['문제 제기-분석-권고안 순서로', '배경-핵심 쟁점-결론 구조로', '맥락-사례-해석-제언 흐름으로', '핵심 질문-근거-정리 구조로'];
+
+  return Array.from({ length: 6 }, (_, index) => {
+    const frame = pickFromPool(mode === 'docs' ? docFrames : pptFrames, random);
+    const angle = pickFromPool(angles, random);
+    const evidenceBit = pickFromPool(evidenceBits, random);
+    const structureBit = pickFromPool(structureBits, random);
+    const theme = pickFromPool(THEME_OPTIONS.map((item) => item.id), random) || (mode === 'docs' ? 'business' : 'pitch');
+    const textDensity = pickFromPool(TEXT_DENSITY_OPTIONS.map((item) => item.id), random) || 'balanced';
+
+    return {
+      title: `${topic}를 ${rolePhrase} ${frame}로 만들고, ${angle} ${structureBit} ${languagePhrase} ${evidenceBit}`,
+      audience,
+      theme,
+      textDensity,
+      domainId: domainEntry.id,
+      domainLabel: domainEntry.label,
+      language,
+      recommendationId: `${mode}-${refreshKey}-${index}`,
+    };
+  });
+};
+
 const buildModeSubtitle = (mode, brief = {}) => {
   const domainLabel = getDomainEntry(brief.domain).label;
   const themeLabel = getThemeEntry(brief.theme).label;
@@ -559,6 +641,7 @@ const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], sectionP
     cleanText(brief.overview),
     `형식: ${modeLabel}`,
     `도메인: ${domainEntry.label}`,
+    cleanText(brief.userRole) ? `작성자 직업/역할: ${cleanText(brief.userRole)}` : '',
     `대상 독자: ${cleanText(brief.audience) || '일반 독자'}`,
     `언어: ${languageEntry.label}`,
     `카드 수: ${targetCount}`,
@@ -573,6 +656,7 @@ const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], sectionP
     brief.toneNote ? `톤 메모: ${cleanText(brief.toneNote)}` : '',
     outlineTitles.length > 0 ? `권장 윤곽선: ${outlineTitles.join(' -> ')}` : '',
     ...buildSectionPlanInstructionLines(sectionPlans, { mode }),
+    brief.language === 'en' ? '최종 결과물의 제목, 본문, 목차, 슬라이드 문구를 모두 영어로 작성하세요.' : '최종 결과물은 한국어 기준으로 자연스럽게 작성하세요.',
     brief.debateUsage === 'off'
       ? '토론 내용은 기본 입력으로 사용하지 말고 브리프와 윤곽선만으로 결과물을 설계하세요.'
       : brief.debateUsage === 'strong'
@@ -604,49 +688,6 @@ const buildCitationOverrides = ({ mode, brief } = {}) => {
   if (brief.theme === 'pitch') return { slideCitationMode: 'none', slideCitationVisibility: 'hidden', slideStylePreset: 'pitch' };
   if (brief.theme === 'business') return { slideCitationMode: 'light', slideCitationVisibility: 'bibliography-only', slideStylePreset: 'investor' };
   return { slideCitationMode: 'selective', slideCitationVisibility: 'inline', slideStylePreset: 'evidence' };
-};
-
-const buildPromptRecommendations = (mode, overview = '') => {
-  const normalizedOverview = cleanText(overview).toLowerCase();
-  const queryTokens = normalizedOverview.split(/\s+/).filter((token) => token.length >= 2);
-
-  const items = DOMAIN_LIBRARY.flatMap((domainEntry) => (
-    (domainEntry[mode] || []).map((example, index) => {
-      const searchable = [
-        domainEntry.label,
-        domainEntry.note,
-        example.title,
-        example.audience,
-        example.theme,
-      ].join(' ').toLowerCase();
-
-      const score = queryTokens.reduce((sum, token) => (searchable.includes(token) ? sum + 1 : sum), 0);
-
-      return {
-        ...example,
-        domainId: domainEntry.id,
-        domainLabel: domainEntry.label,
-        score,
-        index,
-      };
-    })
-  ));
-
-  if (queryTokens.length === 0) {
-    return DOMAIN_LIBRARY
-      .flatMap((domainEntry) => (domainEntry[mode] || []).slice(0, 1).map((example, index) => ({
-        ...example,
-        domainId: domainEntry.id,
-        domainLabel: domainEntry.label,
-        score: 0,
-        index,
-      })))
-      .slice(0, 6);
-  }
-
-  return items
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, 6);
 };
 
 const buildModeCardStyle = (active, accent = '#67e8f9') => ({
@@ -832,6 +873,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const [transcriptError, setTranscriptError] = useState('');
   const [panelMessage, setPanelMessage] = useState('');
   const [topicSuggestions, setTopicSuggestions] = useState([]);
+  const [promptRefreshKey, setPromptRefreshKey] = useState({ docs: 0, ppt: 0 });
 
   const {
     isDiscussing,
@@ -863,8 +905,8 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const pptOutlinePreview = useMemo(() => buildOutlinePreview('ppt', pptBrief), [pptBrief]);
   const docsSectionPlans = useMemo(() => buildSectionPlans('docs', docsBrief), [docsBrief]);
   const pptSectionPlans = useMemo(() => buildSectionPlans('ppt', pptBrief), [pptBrief]);
-  const docsPromptRecommendations = useMemo(() => buildPromptRecommendations('docs', docsBrief.overview), [docsBrief.overview]);
-  const pptPromptRecommendations = useMemo(() => buildPromptRecommendations('ppt', pptBrief.overview), [pptBrief.overview]);
+  const docsPromptRecommendations = useMemo(() => buildPromptRecommendations('docs', docsBrief, promptRefreshKey.docs), [docsBrief, promptRefreshKey.docs]);
+  const pptPromptRecommendations = useMemo(() => buildPromptRecommendations('ppt', pptBrief, promptRefreshKey.ppt), [pptBrief, promptRefreshKey.ppt]);
   const isLoading = isDiscussing || isFetchingTranscript;
   const isYT = isYoutubeUrl(debateInput);
   const displayTotalRounds = Math.max(totalRounds || 0, 1);
@@ -1058,6 +1100,11 @@ export default function QuestionPanel({ onOpenDashboard }) {
       setStatusText('PPT 스튜디오 준비 완료');
     }
     else if (mode === 'debate') setStatusText('토론 실험실 준비 완료');
+  };
+
+  const handleRefreshPromptRecommendations = (mode) => {
+    setPromptRefreshKey((state) => ({ ...state, [mode]: state[mode] + 1 }));
+    setPanelMessage(mode === 'docs' ? '문서 추천 프롬프트를 새로 갱신했습니다.' : 'PPT 추천 프롬프트를 새로 갱신했습니다.');
   };
 
   const handleSelectExample = (mode, example = {}, domainId = 'other') => {
@@ -1270,6 +1317,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
         artifacts,
         brief: {
           overview: cleanText(brief.overview),
+          userRole: cleanText(brief.userRole),
           domain: brief.domain,
           domainLabel: getDomainEntry(brief.domain).label,
           visualTheme: brief.theme,
@@ -1414,28 +1462,74 @@ export default function QuestionPanel({ onOpenDashboard }) {
     </div>
   );
 
-  const renderOutlinePreview = (mode, outlineTitles = [], theme = 'business') => {
+  const renderOutlinePreview = (mode, outlineItems = [], theme = 'business', brief = {}) => {
     const isDeck = mode === 'ppt';
     const themeLabel = getThemeEntry(theme).label;
+    const normalizedItems = (Array.isArray(outlineItems) ? outlineItems : []).map((item, index) => {
+      const title = typeof item === 'string'
+        ? cleanText(item)
+        : cleanText(item?.title || item?.fallbackTitle || (isDeck ? `슬라이드 ${index + 1}` : `섹션 ${index + 1}`));
+      const contentLine = typeof item === 'string'
+        ? ''
+        : cleanText(cleanFreeformText(item?.contentNote || '') || item?.contentPlaceholder || '');
+      const citationTitles = typeof item === 'string' ? [] : normalizeSectionCitations(item?.citations).map((paper) => paper.title).slice(0, 2);
+      const citationMode = typeof item === 'string'
+        ? buildDefaultSectionCitationMode({ title, index })
+        : item?.citationMode || buildDefaultSectionCitationMode({ title, index });
+      const citationLine = citationMode === 'off'
+        ? (isDeck ? '메시지와 장면 전환 중심으로 설계' : '설명 흐름 중심으로 정리')
+        : citationTitles.length > 0
+          ? `인용 후보: ${citationTitles.join(' / ')}`
+          : cleanText(item?.citationQuery || '')
+            ? `인용 탐색: ${cleanText(item.citationQuery)}`
+            : '관련 논문, 기사, 보고서를 연결할 수 있게 설계';
+      const shouldShowImageCue = brief.aiImageMode !== 'off' && (isDeck || brief.aiImageMode === 'hero' || index % 2 === 0);
+      const visualLine = shouldShowImageCue
+        ? `[image] ${isDeck ? '대표 장면 또는 도식 포인트 배치' : '대표 이미지나 도식이 들어갈 위치 표시'}`
+        : '';
+
+      return {
+        label: isDeck ? `SLIDE ${index + 1}` : `${index + 1}부`,
+        title,
+        lines: [contentLine || (isDeck ? '이 슬라이드에서 전달할 핵심 메시지와 supporting point 정리' : '이 파트에서 무엇을 설명할지와 사례, 해석 방향 정리'), citationLine, visualLine].filter(Boolean).slice(0, 3),
+      };
+    });
 
     return (
       <div style={{ border: '1px solid rgba(125, 211, 252, 0.14)', borderRadius: '14px', padding: '14px', background: 'rgba(2, 6, 23, 0.46)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
           <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em' }}>
-            STRUCTURE PREVIEW
+            TOC BLUEPRINT
           </div>
           <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(191, 248, 255, 0.58)', letterSpacing: '0.08em' }}>
             {themeLabel}
           </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: isDeck ? 'repeat(2, minmax(0, 1fr))' : '1fr', gap: '8px' }}>
-          {outlineTitles.map((title, index) => (
-            <div key={`${title}-${index}`} style={{ padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: isDeck ? 'rgba(15, 23, 42, 0.74)' : 'rgba(15, 23, 42, 0.56)' }}>
-              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: 'rgba(125, 211, 252, 0.7)', letterSpacing: '0.12em', marginBottom: '4px' }}>
-                {isDeck ? `SLIDE ${index + 1}` : `SECTION ${index + 1}`}
+        <div style={{ display: 'grid', gap: '10px' }}>
+          {cleanText(brief.overview) && (
+            <div style={{ padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.16)', background: 'rgba(15, 23, 42, 0.74)' }}>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.12em', marginBottom: '6px' }}>
+                {isDeck ? 'PRESENTATION TITLE' : 'DOCUMENT TITLE'}
               </div>
-              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: '#e2e8f0', lineHeight: 1.35 }}>
-                {title}
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '16px', fontWeight: 700, color: '#f8fafc', lineHeight: 1.35 }}>
+                {cleanText(brief.overview)}
+              </div>
+            </div>
+          )}
+          {normalizedItems.map((item, index) => (
+            <div key={`${item.title}-${index}`} style={{ padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.62)' }}>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: 'rgba(125, 211, 252, 0.72)', letterSpacing: '0.12em', marginBottom: '6px' }}>
+                {item.label}
+              </div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '15px', fontWeight: 700, color: '#e2e8f0', lineHeight: 1.35, marginBottom: '8px' }}>
+                {item.title}
+              </div>
+              <div style={{ display: 'grid', gap: '5px' }}>
+                {item.lines.map((line, lineIndex) => (
+                  <div key={`${line}-${lineIndex}`} style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: 'rgba(226, 232, 240, 0.76)', lineHeight: 1.45 }}>
+                    {line}
+                  </div>
+                ))}
               </div>
             </div>
           ))}
@@ -1446,6 +1540,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
   const renderAdvancedBuilder = (mode) => {
     const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const sectionPlans = mode === 'docs' ? docsSectionPlans : pptSectionPlans;
     const outlineTitles = mode === 'docs' ? docsOutlinePreview : pptOutlinePreview;
     const domainEntry = getDomainEntry(brief.domain);
     const promptRecommendations = (mode === 'docs' ? docsPromptRecommendations : pptPromptRecommendations).slice(0, 3);
@@ -1548,6 +1643,11 @@ export default function QuestionPanel({ onOpenDashboard }) {
             <div style={advancedSectionStyle}>
               <div style={advancedSectionLabelStyle}>BRIEF CONTEXT</div>
               <div style={{ display: 'grid', gap: '12px' }}>
+                <label>
+                  <span style={advancedFieldLabelStyle}>내 직업 / 역할</span>
+                  <input value={brief.userRole} onChange={(event) => updateBrief(mode, { userRole: event.target.value })} placeholder="예: 대학생, 변호사, 마케터, PM" style={advancedInputStyle} />
+                </label>
+
                 <label>
                   <span style={advancedFieldLabelStyle}>{mode === 'docs' ? '독자 / 제출 대상' : '청중 / 발표 대상'}</span>
                   <input value={brief.audience} onChange={(event) => updateBrief(mode, { audience: event.target.value })} style={advancedInputStyle} />
@@ -1687,7 +1787,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
               </div>
             </div>
 
-            {renderOutlinePreview(mode, outlineTitles, brief.theme)}
+            {renderOutlinePreview(mode, sectionPlans, brief.theme, brief)}
           </div>
 
           <div style={{ display: 'grid', gap: '14px' }}>
@@ -1706,12 +1806,17 @@ export default function QuestionPanel({ onOpenDashboard }) {
             </div>
 
             <div style={advancedSectionStyle}>
-              <div style={advancedSectionLabelStyle}>PROMPT EXAMPLES</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
+                <div style={advancedSectionLabelStyle}>PROMPT EXAMPLES</div>
+                <button type="button" onClick={() => handleRefreshPromptRecommendations(mode)} style={{ ...buildAdvancedActionButtonStyle(false, false), width: 'auto', padding: '8px 10px' }}>
+                  새 추천 받기
+                </button>
+              </div>
               <div style={{ display: 'grid', gap: '8px' }}>
                 {promptRecommendations.map((example, index) => (
                   <button key={`${example.title}-${index}`} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(191, 219, 254, 0.9)', background: '#ffffff', cursor: 'pointer' }}>
                     <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#0f172a', marginBottom: '4px' }}>{example.title}</div>
-                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>{example.domainLabel} · {example.audience}</div>
+                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>{example.domainLabel} · {example.audience} · {example.language}</div>
                   </button>
                 ))}
               </div>
@@ -1811,13 +1916,39 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 style={{ ...inputStyle, resize: 'vertical' }}
               />
             </label>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              <label>
+                <span style={fieldLabelStyle}>내 직업 / 역할</span>
+                <input
+                  value={brief.userRole}
+                  onChange={(event) => updateBrief(mode, { userRole: event.target.value })}
+                  placeholder="예: 대학생, 디자이너, PM, 연구원"
+                  style={inputStyle}
+                />
+              </label>
+
+              <label>
+                <span style={fieldLabelStyle}>생성 언어</span>
+                <select value={brief.language} onChange={(event) => updateBrief(mode, { language: event.target.value })} style={inputStyle}>
+                  {LANGUAGE_OPTIONS.map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
 
           <div style={{ border: '1px solid rgba(148, 163, 184, 0.14)', borderRadius: '14px', padding: '14px', background: 'rgba(2, 6, 23, 0.4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
               <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#c4f1ff', letterSpacing: '0.14em' }}>PROMPT RECOMMENDATIONS</div>
-              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)' }}>
-                개요 아래에서 바로 고를 수 있는 추천 프롬프트입니다.
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)' }}>
+                  개요를 기준으로 갱신할 때마다 새롭게 바뀌는 추천 프롬프트입니다.
+                </div>
+                <button type="button" onClick={() => handleRefreshPromptRecommendations(mode)} style={{ ...secondaryButtonStyle(false), width: 'auto', padding: '8px 10px' }}>
+                  새 추천 받기
+                </button>
               </div>
             </div>
             <div style={{ display: 'grid', gap: '10px' }}>
@@ -1830,6 +1961,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
                     <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.1em' }}>DOMAIN · {example.domainLabel}</div>
                     <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#86efac', letterSpacing: '0.1em' }}>AUDIENCE · {example.audience}</div>
                     <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#fcd34d', letterSpacing: '0.1em' }}>THEME · {getThemeEntry(example.theme).label}</div>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#c4b5fd', letterSpacing: '0.1em' }}>LANGUAGE · {example.language}</div>
                   </div>
                 </button>
               ))}
@@ -1838,12 +1970,12 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
           <div style={{ display: 'grid', gap: '8px' }}>
             <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em' }}>
-              OVERVIEW OUTLINE PREVIEW
+              TOC PREVIEW
             </div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)', lineHeight: 1.45 }}>
-              개요를 기준으로 {mode === 'docs' ? '문서가 어떤 섹션 구조로 전개될지' : '발표자료가 어떤 슬라이드 흐름으로 전개될지'} 미리 보여줍니다.
+              예시 자료처럼 제목 아래에 목차와 들어갈 내용, 인용 방향, 이미지 위치가 어떤 식으로 들어갈지 먼저 보여줍니다.
             </div>
-            {renderOutlinePreview(mode, outlineTitles, brief.theme)}
+            {renderOutlinePreview(mode, sectionPlans, brief.theme, brief)}
           </div>
 
           <button type="button" onClick={() => handleAdvanceBuilder(mode)} disabled={!cleanText(brief.overview)} style={buildPrimaryButtonStyle(!cleanText(brief.overview), mode === 'docs' ? 'green' : 'cyan')}>
@@ -1893,6 +2025,16 @@ export default function QuestionPanel({ onOpenDashboard }) {
             </div>
 
             <label>
+              <span style={fieldLabelStyle}>내 직업 / 역할</span>
+              <input
+                value={brief.userRole}
+                onChange={(event) => updateBrief(mode, { userRole: event.target.value })}
+                placeholder="예: 대학생, 데이터 분석가, 정책 담당자"
+                style={inputStyle}
+              />
+            </label>
+
+            <label>
               <span style={fieldLabelStyle}>{mode === 'docs' ? '독자 / 제출 대상' : '청중 / 발표 대상'}</span>
               <input
                 value={brief.audience}
@@ -1900,6 +2042,15 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 placeholder={mode === 'docs' ? '예: 경영진, 교수, 고객사' : '예: 투자자, 사내 임원, 세미나 청중'}
                 style={inputStyle}
               />
+            </label>
+
+            <label>
+              <span style={fieldLabelStyle}>생성 언어</span>
+              <select value={brief.language} onChange={(event) => updateBrief(mode, { language: event.target.value })} style={inputStyle}>
+                {LANGUAGE_OPTIONS.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
             </label>
 
             <div>
@@ -1993,6 +2144,10 @@ export default function QuestionPanel({ onOpenDashboard }) {
                     {paperPoolLoading[mode] ? '논문 후보 갱신 중...' : '논문 후보 새로고침'}
                   </button>
                 </div>
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                {renderOutlinePreview(mode, sectionPlans, brief.theme, brief)}
               </div>
 
               {paperPoolError[mode] && !citationPaperPool.length && (
@@ -2117,9 +2272,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
             <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(8, 47, 73, 0.18)' }}>
               <div style={{ ...fieldLabelStyle, marginBottom: '6px' }}>CURRENT STRUCTURE</div>
               <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45, marginBottom: '8px' }}>
-                현재 목차는 생성 시 우선 순서로 반영됩니다. 인용 후보는 전체 개요 기준으로 불러온 학술 결과 {citationPaperPool.length}건에서 추천됩니다.
+                현재 목차는 생성 시 우선 순서로 반영됩니다. 전체 항목 수는 {sectionPlans.length}개이고, 인용 후보는 전체 개요 기준으로 불러온 학술 결과 {citationPaperPool.length}건에서 추천됩니다.
               </div>
-              {renderOutlinePreview(mode, outlineTitles, brief.theme)}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ ...buildChipStyle(true, 'rgba(125, 211, 252, 0.32)'), fontSize: '10px', cursor: 'default' }}>THEME · {getThemeEntry(brief.theme).label}</div>
+                <div style={{ ...buildChipStyle(true, 'rgba(196, 181, 253, 0.32)'), fontSize: '10px', cursor: 'default' }}>LANGUAGE · {getLanguageEntry(brief.language).label}</div>
+                <div style={{ ...buildChipStyle(true, 'rgba(74, 222, 128, 0.32)'), fontSize: '10px', cursor: 'default' }}>ITEMS · {sectionPlans.length}</div>
+              </div>
             </div>
           </div>
         </div>

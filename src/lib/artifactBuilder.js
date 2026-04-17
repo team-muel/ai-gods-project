@@ -730,6 +730,7 @@ const getContentDensityLimit = (textDensity = '', { artifactType = 'report' } = 
 
 const buildCustomizationSummaryLines = (customization = {}) => [
   customization.briefDomain ? `- 도메인: ${customization.briefDomain}` : null,
+  customization.userRole ? `- 작성자 직업/역할: ${customization.userRole}` : null,
   customization.visualTheme ? `- 시각 테마: ${customization.visualTheme}` : null,
   customization.visualPreset ? `- 테마 프리셋: ${customization.visualPreset}` : null,
   customization.textDensity ? `- 텍스트 양: ${customization.textDensity}` : null,
@@ -1863,6 +1864,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       scholarlySummary: dossier.scholarlySummary || null,
       briefPreferences: {
         domain: customization.briefDomain || null,
+        userRole: customization.userRole || null,
         visualTheme: customization.visualTheme || null,
         visualPreset: customization.visualPreset || null,
         textDensity: customization.textDensity || null,
@@ -1888,6 +1890,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       planSource: reportPlan.source,
       source: 'dossier_report_builder',
       audience: customization.audience || null,
+      userRole: customization.userRole || null,
       request: customization.reportRequest || null,
       visualTheme: customization.visualTheme || null,
       visualPreset: customization.visualPreset || null,
@@ -1927,6 +1930,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       scholarlySummary: dossier.scholarlySummary || null,
       briefPreferences: {
         domain: customization.briefDomain || null,
+        userRole: customization.userRole || null,
         visualTheme: customization.visualTheme || null,
         visualPreset: customization.visualPreset || null,
         textDensity: customization.textDensity || null,
@@ -1951,6 +1955,7 @@ export const buildDebateArtifacts = ({ dossier, customization = {} } = {}) => {
       planSource: slidePlan.source,
       source: 'dossier_slide_builder',
       audience: customization.audience || null,
+      userRole: customization.userRole || null,
       request: customization.slideRequest || null,
       visualTheme: customization.visualTheme || null,
       visualPreset: customization.visualPreset || null,

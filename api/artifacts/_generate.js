@@ -7,6 +7,7 @@ const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
 
 const normalizeBrief = (brief = {}) => ({
   overview: cleanText(brief?.overview || '').slice(0, 600),
+  userRole: cleanText(brief?.userRole || '').slice(0, 120),
   domain: cleanText(brief?.domain || '').slice(0, 40),
   domainLabel: cleanText(brief?.domainLabel || '').slice(0, 80),
   visualTheme: cleanText(brief?.visualTheme || '').slice(0, 40),
@@ -32,6 +33,7 @@ const buildBriefPreferenceLines = (brief = {}, { artifactType = 'report' } = {})
   const domainLabel = brief?.domainLabel || brief?.domain || ''
   const lines = [
     domainLabel ? `도메인: ${domainLabel}` : null,
+    brief?.userRole ? `작성자 직업/역할: ${brief.userRole}` : null,
     brief?.visualTheme ? `시각 테마: ${brief.visualTheme}` : null,
     brief?.visualPreset ? `테마 프리셋: ${brief.visualPreset}` : null,
     brief?.textDensity ? `텍스트 양: ${brief.textDensity}` : null,
@@ -66,7 +68,7 @@ const buildBriefMessages = ({ topic = '', instructions = '', audience = '', brie
       godId: 'brief-orchestrator',
       god: 'Brief Orchestrator',
       round: 1,
-      content: `목표 ${outputLabel}: ${topic}. 대상 독자/청중: ${audience || '일반 사용자'}. 도메인: ${brief?.domainLabel || brief?.domain || '일반'}.`,
+      content: `목표 ${outputLabel}: ${topic}. 대상 독자/청중: ${audience || '일반 사용자'}. 작성자 역할: ${brief?.userRole || '미지정'}. 도메인: ${brief?.domainLabel || brief?.domain || '일반'}.`,
     },
     {
       godId: 'structure-designer',
@@ -99,6 +101,7 @@ const buildBriefConsensus = ({ topic = '', instructions = '', audience = '', bri
   return [
     '📊 핵심 합의점 3가지',
     `1. ${topic}를 ${audience || '일반 사용자'} 대상 ${outputLabel}로 구조화합니다.`,
+    brief?.userRole ? `1-1. 작성자 역할은 ${brief.userRole}로 간주하고 표현 톤과 설명 깊이를 맞춥니다.` : null,
     `2. ${brief?.outlineTitles?.length > 0 ? `구성은 ${brief.outlineTitles.join(', ')} 순을 우선합니다.` : '브리프 중심으로 배경, 핵심 논점, 결론 흐름을 분명히 나눕니다.'}`,
     `3. ${densityText} ${imageText}`,
     brief?.layoutPreset ? `4. 레이아웃 모드는 ${brief.layoutPreset}을 우선하고, 언어는 ${brief.language || 'ko'} 기준으로 맞춥니다.` : null,
@@ -472,6 +475,7 @@ export default async function handler(req, res) {
       cardCount: brief.cardCount,
       layoutPreset: brief.layoutPreset,
       language: brief.language,
+      userRole: brief.userRole,
       writingNote: brief.writingNote,
       toneNote: brief.toneNote,
       reportOutlineTitles: mode === 'docs' || mode === 'both' ? brief.outlineTitles : [],
