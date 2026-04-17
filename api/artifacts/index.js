@@ -34,5 +34,10 @@ export default async function handler(req, res) {
     return await feedbackHandler(req, res)
   }
 
+  if (route === 'outline') {
+    const { default: outlineHandler } = await import('./_outline.js')
+    return await outlineHandler(req, res)
+  }
+
   return sendJson(res, 404, { error: '지원하지 않는 artifacts route 입니다.' })
 }

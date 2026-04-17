@@ -5,6 +5,7 @@ import {
   downloadBlobResult,
   exportWorkbenchArtifact,
   generateAutonomousTopics,
+  generateOutlineDraft,
   generateWorkbenchArtifacts,
   getGoogleExportStatus,
   startGoogleOAuth,
@@ -503,6 +504,46 @@ const buildSectionPlans = (mode, brief = {}) => {
   });
 };
 
+const buildSectionPlansFromDraft = (mode, brief = {}, draftItems = []) => {
+  const domainLabel = getDomainEntry(brief.domain).label;
+  const normalizedDraftItems = (Array.isArray(draftItems) ? draftItems : []).filter((item) => item && typeof item === 'object');
+
+  if (normalizedDraftItems.length === 0) {
+    return buildSectionPlans(mode, brief).map((plan) => ({
+      title: plan.title,
+      contentNote: plan.contentNote,
+      citationMode: plan.citationMode,
+      citationQuery: plan.citationQuery,
+      citations: normalizeSectionCitations(plan.citations),
+    }));
+  }
+
+  return normalizedDraftItems.map((item, index) => {
+    const fallbackTitle = cleanText(item?.title || '') || (mode === 'ppt' ? `슬라이드 ${index + 1}` : `섹션 ${index + 1}`);
+    const bullets = Array.isArray(item?.bullets)
+      ? item.bullets
+      : cleanFreeformText(item?.contentNote || '').split(/\n/);
+    const contentLines = (Array.isArray(bullets) ? bullets : [])
+      .map((entry) => cleanText(String(entry || '').replace(/^[-*•]\s*/, '')))
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((entry) => `• ${entry}`);
+
+    return {
+      title: fallbackTitle,
+      contentNote: contentLines.join('\n'),
+      citationMode: SECTION_CITATION_OPTIONS.some((option) => option.id === item?.citationMode)
+        ? item.citationMode
+        : buildDefaultSectionCitationMode({ title: fallbackTitle, index }),
+      citationQuery: cleanText(item?.citationQuery || buildSectionCitationPlaceholder({ overview: brief.overview, title: fallbackTitle })).slice(0, 180),
+      citations: [],
+      fallbackTitle,
+      contentPlaceholder: buildSectionContentPlaceholder({ mode, title: fallbackTitle, index, domainLabel }),
+      citationPlaceholder: buildSectionCitationPlaceholder({ overview: brief.overview, title: fallbackTitle }),
+    };
+  });
+};
+
 const buildSectionPlanInstructionLines = (sectionPlans = [], { mode = 'docs' } = {}) => {
   const blockLabel = mode === 'ppt' ? '슬라이드' : '섹션';
 
@@ -546,73 +587,215 @@ const createSeededRandom = (seedValue = 1) => {
   };
 };
 
-const pickFromPool = (pool = [], random = Math.random) => pool[Math.floor(random() * pool.length)] || '';
+const shuffleWithSeed = (items = [], random = Math.random) => {
+  const nextItems = [...items];
+  for (let index = nextItems.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [nextItems[index], nextItems[swapIndex]] = [nextItems[swapIndex], nextItems[index]];
+  }
+  return nextItems;
+};
+
+const normalizeRecommendationTopic = (overview = '', domainLabel = '일반') => {
+  const normalized = cleanText(overview);
+  if (!normalized) return `${domainLabel} 주제`;
+
+  if (normalized.length > 80 && /(기준으로|최종 결과물|인용은|구성하고|만들고)/.test(normalized)) {
+    const matched = normalized.match(/^(.+?)(?:를|을)\s/);
+    if (matched?.[1]) return cleanText(matched[1]);
+  }
+
+  return normalized;
+};
+
+const DOC_RECOMMENDATION_PROFILES = [
+  {
+    id: 'executive-brief',
+    label: 'Executive Brief',
+    frame: '브리프 문서',
+    emphasis: '결론과 판단이 첫 문단에 바로 보이게 정리',
+    structure: '문제-판단-근거-실행 순서로 구성',
+    theme: 'business',
+    textDensity: 'balanced',
+    writingNote: '첫 문단에서 결론을 먼저 제시하고, 핵심 근거와 실행 포인트를 분리해서 정리',
+    toneNote: '임원 보고용으로 짧고 단정한 톤 유지',
+  },
+  {
+    id: 'evidence-report',
+    label: 'Evidence Report',
+    frame: '분석 보고서',
+    emphasis: '주장과 근거가 섞이지 않게 단락을 분리',
+    structure: '배경-근거-해석-시사점 순서로 구성',
+    theme: 'academic',
+    textDensity: 'dense',
+    writingNote: '핵심 근거마다 출처 후보를 붙일 수 있게 문단을 나누고, 사례와 데이터는 따로 정리',
+    toneNote: '근거 중심으로 차분하고 정확한 톤 유지',
+  },
+  {
+    id: 'strategy-memo',
+    label: 'Strategy Memo',
+    frame: '전략 메모',
+    emphasis: '배경보다 선택지와 우선순위가 먼저 보이게 재정리',
+    structure: '현황-선택지-우선순위-권고안 순서로 구성',
+    theme: 'editorial',
+    textDensity: 'balanced',
+    writingNote: '선택지 비교와 우선순위를 표처럼 읽히게 정리하고 마지막에 권고안을 명확히 제시',
+    toneNote: '전략 검토 메모처럼 빠르게 읽히는 톤 유지',
+  },
+  {
+    id: 'research-note',
+    label: 'Research Note',
+    frame: '리서치 노트',
+    emphasis: '배경과 선행 사례를 분리해서 읽히게 정리',
+    structure: '문제 제기-배경-사례-해석 순서로 구성',
+    theme: 'minimal-research',
+    textDensity: 'dense',
+    writingNote: '선행 사례와 최신 사례를 분리하고, 각 사례에서 무엇을 배울지 짧게 정리',
+    toneNote: '리서처가 정리한 노트처럼 깔끔하고 절제된 톤 유지',
+  },
+  {
+    id: 'comparative-analysis',
+    label: 'Comparative Analysis',
+    frame: '비교 분석 문서',
+    emphasis: '기준별 비교가 한눈에 보이게 재배치',
+    structure: '비교 기준-옵션별 분석-차이점-선택 포인트 순서로 구성',
+    theme: 'business',
+    textDensity: 'balanced',
+    writingNote: '비교 기준을 먼저 제시하고, 옵션별 장단점과 선택 포인트를 분리해서 정리',
+    toneNote: '의사결정용 비교 문서처럼 명료한 톤 유지',
+  },
+  {
+    id: 'class-report',
+    label: 'Class Report',
+    frame: '과제형 보고서',
+    emphasis: '배경 설명과 본론을 분리해 읽기 쉽게 정리',
+    structure: '문제 제기-배경-핵심 분석-결론 순서로 구성',
+    theme: 'academic',
+    textDensity: 'dense',
+    writingNote: '교수나 심사자가 읽기 쉽게 배경, 본론, 결론을 명확히 나누고 참고자료 방향도 함께 제시',
+    toneNote: '학술 과제 제출용으로 차분하고 논리적인 톤 유지',
+  },
+];
+
+const PPT_RECOMMENDATION_PROFILES = [
+  {
+    id: 'investor-deck',
+    label: 'Investor Deck',
+    frame: '설득형 발표자료',
+    emphasis: '배경보다 투자 판단 포인트가 먼저 보이게 구성',
+    structure: '왜 지금-핵심 판단-근거-다음 단계 순서로 구성',
+    theme: 'pitch',
+    textDensity: 'light',
+    writingNote: '첫 장과 마지막 장에서 투자 판단 메시지가 명확히 보이게 정리',
+    toneNote: '짧고 강한 설득형 발표 톤 유지',
+  },
+  {
+    id: 'executive-briefing',
+    label: 'Executive Briefing',
+    frame: '브리핑 슬라이드',
+    emphasis: '핵심 판단과 시사점이 바로 보이도록 요약',
+    structure: '상황-핵심 인사이트-리스크-권고안 순서로 구성',
+    theme: 'business',
+    textDensity: 'balanced',
+    writingNote: '장표마다 headline이 먼저 보이게 만들고, supporting bullet은 2~3개로 제한',
+    toneNote: '사내 경영진 보고용으로 짧고 명료한 톤 유지',
+  },
+  {
+    id: 'research-presentation',
+    label: 'Research Presentation',
+    frame: '세미나 deck',
+    emphasis: '질문과 근거가 분리되게 장표 흐름을 정리',
+    structure: '질문-배경-근거-해석-결론 순서로 구성',
+    theme: 'academic',
+    textDensity: 'balanced',
+    writingNote: '연구 발표처럼 연구 질문, 핵심 발견, 해석이 각 장표에서 분명히 나뉘게 구성',
+    toneNote: '학술 발표용으로 차분하고 설명적인 톤 유지',
+  },
+  {
+    id: 'story-deck',
+    label: 'Story Deck',
+    frame: '요약 발표자료',
+    emphasis: '장면 전환이 자연스럽게 이어지도록 재배열',
+    structure: '오프닝-핵심 장면-전환점-마무리 순서로 구성',
+    theme: 'editorial',
+    textDensity: 'light',
+    writingNote: '슬라이드 간 연결감이 보이도록 전환 문장과 장면 중심으로 정리',
+    toneNote: '스토리텔링 발표처럼 유연한 톤 유지',
+  },
+  {
+    id: 'roadmap-deck',
+    label: 'Roadmap Deck',
+    frame: '제안 발표자료',
+    emphasis: '실행 단계와 우선순위가 먼저 보이게 정리',
+    structure: '현황-목표-실행 단계-우선순위-다음 액션 순서로 구성',
+    theme: 'business',
+    textDensity: 'balanced',
+    writingNote: '실행 로드맵과 우선순위가 장표 흐름에서 자연스럽게 읽히게 정리',
+    toneNote: '제안 발표처럼 실행 중심의 톤 유지',
+  },
+  {
+    id: 'evidence-deck',
+    label: 'Evidence Deck',
+    frame: '근거 중심 발표자료',
+    emphasis: '주장과 데이터 근거가 분리되어 보이게 정리',
+    structure: '핵심 주장-데이터-사례-결론 순서로 구성',
+    theme: 'academic',
+    textDensity: 'balanced',
+    writingNote: '핵심 주장 장표와 근거 장표를 구분하고, 필요한 곳만 출처를 붙일 수 있게 구성',
+    toneNote: '근거 중심 브리핑처럼 신뢰감 있는 톤 유지',
+  },
+];
+
+const RECOMMENDATION_SUPPORT_LINES = [
+  '한 카드에는 한 메시지만 남기고 주변 설명은 줄이기',
+  '도입과 결론의 문장을 더 짧게 다듬기',
+  '목차가 보자마자 흐름을 이해할 수 있게 제목을 짓기',
+  '필요하면 비교, 사례, 리스크를 별도 블록으로 분리하기',
+  '근거가 약한 부분은 비워두고 강한 근거가 있는 부분만 강조하기',
+  '이미지가 들어갈 장면과 텍스트만 필요한 장면을 먼저 구분하기',
+];
+
+const RECOMMENDATION_EVIDENCE_LINES = [
+  '인용은 필요한 부분에만 선택적으로 붙이기',
+  '논문과 기사 출처는 분리해서 정리하기',
+  '핵심 주장마다 근거 후보를 한 줄씩 남기기',
+  '배경 설명보다는 검증 가능한 근거를 우선 배치하기',
+  '리뷰 논문과 최신 사례를 함께 묶어서 제시하기',
+  '정량 데이터와 사례 서술을 한 장에 섞지 않기',
+];
 
 const buildPromptRecommendations = (mode, brief = {}, refreshKey = 0) => {
-  const overview = cleanText(brief.overview);
   const domainEntry = getDomainEntry(brief.domain);
+  const topic = normalizeRecommendationTopic(brief.overview, domainEntry.label);
   const userRole = cleanText(brief.userRole);
   const audience = cleanText(brief.audience) || (mode === 'docs' ? '독자' : '청중');
-  const language = brief.language === 'en' ? 'English' : '한국어';
-  const topic = overview || `${domainEntry.label} 주제`;
-  const rolePhrase = userRole ? `${userRole}의 관점에서` : `${audience} 기준으로`;
-  const languagePhrase = brief.language === 'en' ? '최종 결과물은 영어로 구성하고' : '최종 결과물은 한국어로 구성하고';
+  const languageId = brief.language === 'en' ? 'en' : 'ko';
+  const languageLabel = getLanguageEntry(languageId).label;
+  const rolePhrase = userRole ? `${userRole} 기준` : `${audience} 기준`;
   const seed = hashString(`${mode}:${topic}:${brief.domain}:${userRole}:${audience}:${brief.language}:${refreshKey}`);
   const random = createSeededRandom(seed);
+  const profiles = shuffleWithSeed(mode === 'docs' ? DOC_RECOMMENDATION_PROFILES : PPT_RECOMMENDATION_PROFILES, random);
+  const supportLines = shuffleWithSeed(RECOMMENDATION_SUPPORT_LINES, random);
+  const evidenceLines = shuffleWithSeed(RECOMMENDATION_EVIDENCE_LINES, random);
 
-  const docFrames = [
-    '전략 메모',
-    '분석 보고서',
-    '브리프 문서',
-    '리서치 노트',
-    '정리 문서',
-    '과제형 보고서',
-  ];
-  const pptFrames = [
-    '발표 deck',
-    '설득형 발표자료',
-    '요약 발표자료',
-    '브리핑 슬라이드',
-    '세미나 deck',
-    '제안 발표자료',
-  ];
-  const angles = [
-    '핵심 메시지가 먼저 보이도록 재구성하고',
-    '배경보다 판단과 시사점이 먼저 보이게 만들고',
-    '불필요한 설명을 줄이고 결정 포인트 중심으로 정리하고',
-    '독자가 바로 이해할 수 있게 맥락과 결론을 선명히 나누고',
-    '사례와 근거를 구분해서 읽히게 만들고',
-    '도입, 핵심 분석, 마무리 흐름이 또렷하게 보이게 설계하고',
-  ];
-  const evidenceBits = [
-    '필요한 부분에만 논문 인용을 붙이기',
-    '핵심 주장마다 근거가 보이게 구성하기',
-    '사례와 데이터 출처를 섞지 않고 정리하기',
-    '리뷰 논문과 최신 사례를 함께 엮기',
-    '인용은 선택적으로 쓰되 근거가 약한 부분은 비워두기',
-    '논문과 기사 출처를 분리해서 제시하기',
-  ];
-  const structureBits = mode === 'ppt'
-    ? ['문제-근거-시사점 흐름으로', '질문-해석-결론 구조로', '오프닝-핵심 장면-마무리 순서로', '배경-핵심 포인트-다음 단계 순서로']
-    : ['문제 제기-분석-권고안 순서로', '배경-핵심 쟁점-결론 구조로', '맥락-사례-해석-제언 흐름으로', '핵심 질문-근거-정리 구조로'];
-
-  return Array.from({ length: 6 }, (_, index) => {
-    const frame = pickFromPool(mode === 'docs' ? docFrames : pptFrames, random);
-    const angle = pickFromPool(angles, random);
-    const evidenceBit = pickFromPool(evidenceBits, random);
-    const structureBit = pickFromPool(structureBits, random);
-    const theme = pickFromPool(THEME_OPTIONS.map((item) => item.id), random) || (mode === 'docs' ? 'business' : 'pitch');
-    const textDensity = pickFromPool(TEXT_DENSITY_OPTIONS.map((item) => item.id), random) || 'balanced';
+  return profiles.slice(0, 6).map((profile, index) => {
+    const supportLine = supportLines[index % supportLines.length];
+    const evidenceLine = evidenceLines[index % evidenceLines.length];
 
     return {
-      title: `${topic}를 ${rolePhrase} ${frame}로 만들고, ${angle} ${structureBit} ${languagePhrase} ${evidenceBit}`,
+      title: `${topic} · ${profile.label}`,
+      description: `${rolePhrase} ${profile.frame}로 만들고, ${profile.emphasis}. ${profile.structure}. ${supportLine}. ${evidenceLine}.`,
+      overview: topic,
       audience,
-      theme,
-      textDensity,
+      theme: profile.theme,
+      textDensity: profile.textDensity,
       domainId: domainEntry.id,
       domainLabel: domainEntry.label,
-      language,
-      recommendationId: `${mode}-${refreshKey}-${index}`,
+      language: languageLabel,
+      languageId,
+      writingNote: `${profile.writingNote}. ${supportLine}. ${evidenceLine}.`,
+      toneNote: `${profile.toneNote}. 최종 결과물은 ${languageLabel} 기준으로 정리.`,
+      recommendationId: `${mode}-${profile.id}-${refreshKey}`,
     };
   });
 };
@@ -874,6 +1057,9 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const [panelMessage, setPanelMessage] = useState('');
   const [topicSuggestions, setTopicSuggestions] = useState([]);
   const [promptRefreshKey, setPromptRefreshKey] = useState({ docs: 0, ppt: 0 });
+  const [outlineDraftLoading, setOutlineDraftLoading] = useState({ docs: false, ppt: false });
+  const [outlineDraftError, setOutlineDraftError] = useState({ docs: '', ppt: '' });
+  const [outlineDraftSource, setOutlineDraftSource] = useState({ docs: '', ppt: '' });
 
   const {
     isDiscussing,
@@ -1107,17 +1293,75 @@ export default function QuestionPanel({ onOpenDashboard }) {
     setPanelMessage(mode === 'docs' ? '문서 추천 프롬프트를 새로 갱신했습니다.' : 'PPT 추천 프롬프트를 새로 갱신했습니다.');
   };
 
+  const handleGenerateOutlineDraft = async (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    if (!cleanText(brief.overview)) {
+      setPanelMessage('주제 개요를 먼저 입력하세요.');
+      return;
+    }
+
+    setOutlineDraftLoading((state) => ({ ...state, [mode]: true }));
+    setOutlineDraftError((state) => ({ ...state, [mode]: '' }));
+    setPanelMessage(mode === 'docs' ? 'AI가 문서 목차 기틀을 만들고 있습니다.' : 'AI가 PPT 목차 기틀을 만들고 있습니다.');
+
+    try {
+      const data = await generateOutlineDraft({
+        mode,
+        brief: {
+          overview: cleanText(brief.overview),
+          userRole: cleanText(brief.userRole),
+          audience: cleanText(brief.audience),
+          domain: brief.domain,
+          domainLabel: getDomainEntry(brief.domain).label,
+          theme: brief.theme,
+          textDensity: brief.textDensity,
+          aiImageMode: brief.aiImageMode,
+          language: brief.language,
+          cardCount: getCardCount(brief.cardCount, mode === 'docs' ? DEFAULT_DOC_BRIEF.cardCount : DEFAULT_PPT_BRIEF.cardCount),
+          writingNote: cleanText(brief.writingNote),
+          toneNote: cleanText(brief.toneNote),
+        },
+      });
+
+      const nextPlans = buildSectionPlansFromDraft(mode, brief, data?.items || []);
+      updateBrief(mode, {
+        sectionPlans: nextPlans.map((plan) => ({
+          title: plan.title,
+          contentNote: plan.contentNote,
+          citationMode: plan.citationMode,
+          citationQuery: plan.citationQuery,
+          citations: normalizeSectionCitations(plan.citations),
+        })),
+        outlineTitles: nextPlans.map((plan) => cleanText(plan.title) || plan.fallbackTitle),
+        cardCount: nextPlans.length,
+      });
+      setOutlineDraftSource((state) => ({ ...state, [mode]: data?.source || 'fallback' }));
+      setPanelMessage(mode === 'docs' ? 'AI가 문서 목차 초안을 먼저 구성했습니다.' : 'AI가 PPT 목차 초안을 먼저 구성했습니다.');
+    } catch (error) {
+      setOutlineDraftError((state) => ({ ...state, [mode]: error.message || 'AI 목차 초안을 불러오지 못했습니다.' }));
+      updateBrief(mode, { outlineTitles: [], sectionPlans: [] });
+      setOutlineDraftSource((state) => ({ ...state, [mode]: '' }));
+      setPanelMessage(error.message || 'AI 목차 초안 생성 실패');
+    } finally {
+      setOutlineDraftLoading((state) => ({ ...state, [mode]: false }));
+    }
+  };
+
   const handleSelectExample = (mode, example = {}, domainId = 'other') => {
+    const currentBrief = mode === 'docs' ? docsBrief : pptBrief;
     updateBrief(mode, {
-      overview: example.title || '',
+      overview: example.overview || normalizeRecommendationTopic(currentBrief.overview, getDomainEntry(domainId).label),
       audience: example.audience || (mode === 'docs' ? DEFAULT_DOC_BRIEF.audience : DEFAULT_PPT_BRIEF.audience),
       theme: example.theme || (mode === 'docs' ? DEFAULT_DOC_BRIEF.theme : DEFAULT_PPT_BRIEF.theme),
       textDensity: example.textDensity || 'balanced',
+      language: example.languageId || currentBrief.language,
+      writingNote: example.writingNote || currentBrief.writingNote,
+      toneNote: example.toneNote || currentBrief.toneNote,
       domain: domainId,
       outlineTitles: [],
       sectionPlans: [],
     });
-    setPanelMessage(`${mode === 'docs' ? '문서' : 'PPT'} 브리프 예시를 채웠습니다. 필요한 부분만 수정해서 바로 생성할 수 있습니다.`);
+    setPanelMessage(`${mode === 'docs' ? '문서' : 'PPT'} 추천 구성을 적용했습니다. 주제 개요는 유지하고 추천 스타일만 반영했습니다.`);
   };
 
   const handleAdvanceBuilder = (mode) => {
@@ -1127,8 +1371,9 @@ export default function QuestionPanel({ onOpenDashboard }) {
       return;
     }
 
+    updateBrief(mode, { sectionPlans: [], outlineTitles: [] });
     setBuilderStage((state) => ({ ...state, [mode]: 'details' }));
-    setPanelMessage(mode === 'docs' ? '개요를 바탕으로 문서 구조 설정 단계로 이동했습니다.' : '개요를 바탕으로 PPT 구조 설정 단계로 이동했습니다.');
+    void handleGenerateOutlineDraft(mode);
   };
 
   const handleBackToOverview = (mode) => {
@@ -1183,8 +1428,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
   };
 
   const handleResetAutoOutline = (mode) => {
-    updateBrief(mode, { outlineTitles: [], sectionPlans: [] });
-    setPanelMessage(mode === 'docs' ? '문서 윤곽선을 자동 생성 상태로 되돌렸습니다.' : 'PPT 윤곽선을 자동 생성 상태로 되돌렸습니다.');
+    void handleGenerateOutlineDraft(mode);
   };
 
   const handleSectionContentNoteChange = (mode, index, value) => {
@@ -1469,9 +1713,14 @@ export default function QuestionPanel({ onOpenDashboard }) {
       const title = typeof item === 'string'
         ? cleanText(item)
         : cleanText(item?.title || item?.fallbackTitle || (isDeck ? `슬라이드 ${index + 1}` : `섹션 ${index + 1}`));
-      const contentLine = typeof item === 'string'
-        ? ''
-        : cleanText(cleanFreeformText(item?.contentNote || '') || item?.contentPlaceholder || '');
+      const contentLines = typeof item === 'string'
+        ? []
+        : cleanFreeformText(item?.contentNote || '')
+          .split(/\n/)
+          .map((entry) => cleanText(String(entry || '').replace(/^[-*•]\s*/, '')))
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((entry) => `• ${entry}`);
       const citationTitles = typeof item === 'string' ? [] : normalizeSectionCitations(item?.citations).map((paper) => paper.title).slice(0, 2);
       const citationMode = typeof item === 'string'
         ? buildDefaultSectionCitationMode({ title, index })
@@ -1491,7 +1740,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
       return {
         label: isDeck ? `SLIDE ${index + 1}` : `${index + 1}부`,
         title,
-        lines: [contentLine || (isDeck ? '이 슬라이드에서 전달할 핵심 메시지와 supporting point 정리' : '이 파트에서 무엇을 설명할지와 사례, 해석 방향 정리'), citationLine, visualLine].filter(Boolean).slice(0, 3),
+        lines: [...(contentLines.length > 0 ? contentLines : [isDeck ? '이 슬라이드에서 전달할 핵심 메시지와 supporting point 정리' : '이 파트에서 무엇을 설명할지와 사례, 해석 방향 정리']), citationLine, visualLine].filter(Boolean).slice(0, 3),
       };
     });
 
@@ -1757,8 +2006,8 @@ export default function QuestionPanel({ onOpenDashboard }) {
                   <div style={advancedBodyTextStyle}>카드별 제목을 직접 편집하고, 필요한 경우 카드를 추가하거나 자동 윤곽선으로 되돌릴 수 있습니다.</div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => handleResetAutoOutline(mode)} style={buildAdvancedActionButtonStyle(false, false)}>
-                    자동 윤곽선 복원
+                  <button type="button" onClick={() => handleResetAutoOutline(mode)} disabled={outlineDraftLoading[mode]} style={buildAdvancedActionButtonStyle(false, outlineDraftLoading[mode])}>
+                    {outlineDraftLoading[mode] ? 'AI 초안 생성 중...' : 'AI 목차 다시 만들기'}
                   </button>
                   <button type="button" onClick={() => handleAddOutlineItem(mode)} disabled={outlineTitles.length >= 10} style={buildAdvancedActionButtonStyle(true, outlineTitles.length >= 10)}>
                     카드 추가
@@ -1816,6 +2065,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 {promptRecommendations.map((example, index) => (
                   <button key={`${example.title}-${index}`} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(191, 219, 254, 0.9)', background: '#ffffff', cursor: 'pointer' }}>
                     <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#0f172a', marginBottom: '4px' }}>{example.title}</div>
+                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#475569', lineHeight: 1.45, marginBottom: '8px' }}>{example.description}</div>
                     <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>{example.domainLabel} · {example.audience} · {example.language}</div>
                   </button>
                 ))}
@@ -1868,7 +2118,9 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const renderBuilder = (mode) => {
     const brief = mode === 'docs' ? docsBrief : pptBrief;
     const sectionPlans = mode === 'docs' ? docsSectionPlans : pptSectionPlans;
-    const outlineTitles = sectionPlans.map((plan) => cleanText(plan.title) || plan.fallbackTitle);
+    const hasExplicitSectionPlans = Array.isArray(brief.sectionPlans) && brief.sectionPlans.length > 0;
+    const visibleSectionPlans = outlineDraftLoading[mode] && !hasExplicitSectionPlans ? [] : sectionPlans;
+    const outlineTitles = visibleSectionPlans.map((plan) => cleanText(plan.title) || plan.fallbackTitle);
     const domainEntry = getDomainEntry(brief.domain);
     const promptRecommendations = mode === 'docs' ? docsPromptRecommendations : pptPromptRecommendations;
     const artifact = mode === 'docs' ? artifacts?.report : artifacts?.slides;
@@ -1897,7 +2149,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 STEP 1 / 2 · OVERVIEW
               </div>
               <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.7)', lineHeight: 1.45 }}>
-                먼저 주제 개요를 정리하면 추천 프롬프트와 예상 윤곽선을 바탕으로 다음 단계에서 구조를 구체화합니다.
+                먼저 주제 개요를 정리하면 다음 단계에서 AI가 실제 목차 초안과 내용 기틀을 먼저 만들어 줍니다.
               </div>
             </div>
             <button type="button" onClick={() => handleModeSelect('home')} style={secondaryButtonStyle(false)}>
@@ -1957,6 +2209,9 @@ export default function QuestionPanel({ onOpenDashboard }) {
                   <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginBottom: '6px' }}>
                     {example.title}
                   </div>
+                  <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.74)', lineHeight: 1.45, marginBottom: '8px' }}>
+                    {example.description}
+                  </div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.1em' }}>DOMAIN · {example.domainLabel}</div>
                     <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#86efac', letterSpacing: '0.1em' }}>AUDIENCE · {example.audience}</div>
@@ -1968,14 +2223,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gap: '8px' }}>
-            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em' }}>
-              TOC PREVIEW
+          <div style={{ padding: '14px', borderRadius: '14px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(8, 47, 73, 0.18)' }}>
+            <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em', marginBottom: '8px' }}>
+              NEXT STEP · AI DRAFT
             </div>
-            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)', lineHeight: 1.45 }}>
-              예시 자료처럼 제목 아래에 목차와 들어갈 내용, 인용 방향, 이미지 위치가 어떤 식으로 들어갈지 먼저 보여줍니다.
+            <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.5 }}>
+              다음 단계로 넘어가면 AI가 사진처럼 실제 편집 가능한 목차 초안, 내용 bullet, 이미지 카드 위치를 먼저 구성합니다. 그 다음에 사용자가 수정하는 흐름으로 진행됩니다.
             </div>
-            {renderOutlinePreview(mode, sectionPlans, brief.theme, brief)}
           </div>
 
           <button type="button" onClick={() => handleAdvanceBuilder(mode)} disabled={!cleanText(brief.overview)} style={buildPrimaryButtonStyle(!cleanText(brief.overview), mode === 'docs' ? 'green' : 'cyan')}>
@@ -1999,7 +2253,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
               STEP 2 / 2 · CONTENT PLAN
             </div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.7)', lineHeight: 1.45 }}>
-              개요를 바탕으로 항목별로 무엇을 넣을지, 어떤 논문과 자료를 인용할지 먼저 설계한 뒤 결과물을 생성합니다.
+              개요를 바탕으로 AI가 먼저 기틀을 만들고, 그 초안을 사용자가 수정한 뒤 결과물을 생성합니다.
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', minWidth: '200px' }}>
@@ -2130,14 +2384,14 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 <div>
                   <div style={{ ...fieldLabelStyle, marginBottom: '6px' }}>CONTENTS PLAN</div>
                   <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45 }}>
-                    목차 제목, 들어갈 내용, 인용 전략을 항목별로 확정합니다. 여기서 정한 구조가 바로 생성 프롬프트로 들어갑니다.
+                    AI가 먼저 만든 목차 기틀을 바탕으로 제목, 내용, 인용 전략을 다듬습니다. 여기서 정한 구조가 바로 생성 프롬프트로 들어갑니다.
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => handleResetAutoOutline(mode)} style={{ ...secondaryButtonStyle(false), width: 'auto' }}>
-                    자동 목차 복원
+                  <button type="button" onClick={() => handleResetAutoOutline(mode)} disabled={outlineDraftLoading[mode]} style={{ ...secondaryButtonStyle(outlineDraftLoading[mode]), width: 'auto' }}>
+                    {outlineDraftLoading[mode] ? 'AI 초안 생성 중...' : 'AI 목차 다시 만들기'}
                   </button>
-                  <button type="button" onClick={() => handleAddOutlineItem(mode)} disabled={sectionPlans.length >= 10} style={{ ...secondaryButtonStyle(sectionPlans.length >= 10), width: 'auto' }}>
+                  <button type="button" onClick={() => handleAddOutlineItem(mode)} disabled={sectionPlans.length >= 10 || outlineDraftLoading[mode]} style={{ ...secondaryButtonStyle(sectionPlans.length >= 10 || outlineDraftLoading[mode]), width: 'auto' }}>
                     항목 추가
                   </button>
                   <button type="button" onClick={() => fetchPaperPool(mode, { force: true })} disabled={paperPoolLoading[mode]} style={{ ...secondaryButtonStyle(paperPoolLoading[mode]), width: 'auto' }}>
@@ -2147,8 +2401,20 @@ export default function QuestionPanel({ onOpenDashboard }) {
               </div>
 
               <div style={{ marginBottom: '12px' }}>
-                {renderOutlinePreview(mode, sectionPlans, brief.theme, brief)}
+                {visibleSectionPlans.length > 0 ? renderOutlinePreview(mode, visibleSectionPlans, brief.theme, brief) : null}
               </div>
+
+              {outlineDraftLoading[mode] && (
+                <div style={{ marginBottom: '12px', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.16)', background: 'rgba(15, 23, 42, 0.72)', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: '#e2e8f0', lineHeight: 1.45 }}>
+                  {mode === 'docs' ? 'AI가 문서 목차 기틀을 만드는 중입니다. 몇 초 후 실제 초안이 채워집니다.' : 'AI가 PPT 목차 기틀을 만드는 중입니다. 몇 초 후 실제 초안이 채워집니다.'}
+                </div>
+              )}
+
+              {outlineDraftError[mode] && (
+                <div style={{ marginBottom: '12px', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(248, 113, 113, 0.18)', background: 'rgba(69, 10, 10, 0.28)', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: '#fecaca', lineHeight: 1.45 }}>
+                  {outlineDraftError[mode]}
+                </div>
+              )}
 
               {paperPoolError[mode] && !citationPaperPool.length && (
                 <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '12px', background: 'rgba(30, 41, 59, 0.72)', border: '1px solid rgba(148, 163, 184, 0.16)', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#e2e8f0', lineHeight: 1.4 }}>
@@ -2157,7 +2423,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
               )}
 
               <div style={{ display: 'grid', gap: '12px' }}>
-                {sectionPlans.map((plan, index) => {
+                {visibleSectionPlans.map((plan, index) => {
                   const citationOption = getSectionCitationOptionEntry(plan.citationMode);
                   const suggestedPapers = buildSuggestedPapersForPlan({ plan, paperPool: citationPaperPool, overview: brief.overview });
                   const selectedCitationIds = new Set(normalizeSectionCitations(plan.citations).map((item) => item.id));
@@ -2173,7 +2439,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
                             {mode === 'ppt' ? '이 슬라이드에서 전달할 메시지와 근거를 먼저 설계합니다.' : '이 섹션에 어떤 내용과 근거를 넣을지 먼저 설계합니다.'}
                           </div>
                         </div>
-                        <button type="button" onClick={() => handleRemoveOutlineItem(mode, index)} disabled={sectionPlans.length <= 4} style={{ ...secondaryButtonStyle(sectionPlans.length <= 4), width: 'auto', padding: '8px 10px' }}>
+                        <button type="button" onClick={() => handleRemoveOutlineItem(mode, index)} disabled={visibleSectionPlans.length <= 4 || outlineDraftLoading[mode]} style={{ ...secondaryButtonStyle(visibleSectionPlans.length <= 4 || outlineDraftLoading[mode]), width: 'auto', padding: '8px 10px' }}>
                           삭제
                         </button>
                       </div>
@@ -2272,12 +2538,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
             <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(8, 47, 73, 0.18)' }}>
               <div style={{ ...fieldLabelStyle, marginBottom: '6px' }}>CURRENT STRUCTURE</div>
               <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45, marginBottom: '8px' }}>
-                현재 목차는 생성 시 우선 순서로 반영됩니다. 전체 항목 수는 {sectionPlans.length}개이고, 인용 후보는 전체 개요 기준으로 불러온 학술 결과 {citationPaperPool.length}건에서 추천됩니다.
+                현재 목차는 생성 시 우선 순서로 반영됩니다. 전체 항목 수는 {visibleSectionPlans.length}개이고, 인용 후보는 전체 개요 기준으로 불러온 학술 결과 {citationPaperPool.length}건에서 추천됩니다.
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 <div style={{ ...buildChipStyle(true, 'rgba(125, 211, 252, 0.32)'), fontSize: '10px', cursor: 'default' }}>THEME · {getThemeEntry(brief.theme).label}</div>
                 <div style={{ ...buildChipStyle(true, 'rgba(196, 181, 253, 0.32)'), fontSize: '10px', cursor: 'default' }}>LANGUAGE · {getLanguageEntry(brief.language).label}</div>
-                <div style={{ ...buildChipStyle(true, 'rgba(74, 222, 128, 0.32)'), fontSize: '10px', cursor: 'default' }}>ITEMS · {sectionPlans.length}</div>
+                <div style={{ ...buildChipStyle(true, 'rgba(74, 222, 128, 0.32)'), fontSize: '10px', cursor: 'default' }}>ITEMS · {visibleSectionPlans.length}</div>
+                <div style={{ ...buildChipStyle(true, 'rgba(244, 114, 182, 0.32)'), fontSize: '10px', cursor: 'default' }}>SOURCE · {outlineDraftSource[mode] === 'llm' ? 'AI DRAFT' : outlineDraftSource[mode] === 'fallback' ? 'SAFE FALLBACK' : 'PENDING'}</div>
               </div>
             </div>
           </div>

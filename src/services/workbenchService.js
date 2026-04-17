@@ -52,6 +52,13 @@ export const generateWorkbenchArtifacts = async ({
   })
 }
 
+export const generateOutlineDraft = async ({ mode = 'docs', brief } = {}) => {
+  return await postJson('/api/artifacts/outline', {
+    mode,
+    brief,
+  })
+}
+
 export const submitArtifactFeedback = async ({ debateId, topic, artifactType, direction, artifact, dossier, note = '' } = {}) => {
   return await postJson('/api/artifacts/feedback', {
     debateId,
