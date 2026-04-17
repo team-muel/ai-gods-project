@@ -23,6 +23,106 @@ const supabase = createClient(
   SUPABASE_KEY
 )
 
+const normalizeAutoDebateProfile = (value = '') => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized || normalized === 'default' || normalized === 'standard') return 'fast'
+  if (normalized === 'ultra' || normalized === 'ultralight') return 'ultra-light'
+  return normalized
+}
+
+const AUTO_DEBATE_PROFILE_DEFAULTS = {
+  fast: {
+    maxRounds: 2,
+    minRounds: 2,
+    memberMaxTokens: 220,
+    finalMaxTokens: 320,
+    consensusMaxTokens: 8,
+    searchResultCount: 2,
+    searchSnippetChars: 160,
+    memoryLimit: 3,
+    memoryChars: 90,
+    opinionChars: 120,
+    consensusChars: 72,
+    finalSummaryChars: 96,
+    turnDelayMs: 1200,
+    maxRetries: 5,
+    initialPrompt: '당신의 전문 분야 관점에서 초기 의견을 3~5문장으로 간결하게 제시하세요. 핵심 주장 2개와 실행 함의 1개만 포함하세요.',
+    debatePrompt: '동의/반박/보완하며 토론하세요. 4문장 이내로, 누구의 의견에 반응하는지 구체적으로 언급하세요.',
+    finalTemplate: '아래 형식으로 작성하세요:\n\n📊 핵심 합의점 3가지\n1. \n2. \n3. \n\n⚡ 주요 이견\n\n✅ 권고사항\n- 단기:\n- 중기:\n- 장기:',
+  },
+  'ultra-light': {
+    maxRounds: 1,
+    minRounds: 1,
+    memberMaxTokens: 160,
+    finalMaxTokens: 240,
+    consensusMaxTokens: 6,
+    searchResultCount: 1,
+    searchSnippetChars: 120,
+    memoryLimit: 2,
+    memoryChars: 70,
+    opinionChars: 90,
+    consensusChars: 56,
+    finalSummaryChars: 72,
+    turnDelayMs: 700,
+    maxRetries: 4,
+    initialPrompt: '당신의 전문 분야 관점에서 초기 의견을 2~3문장으로 아주 짧게 제시하세요. 핵심 주장 1개와 즉시 실행 제안 1개만 포함하세요.',
+    debatePrompt: '가장 중요한 동의 또는 우려 1가지만 짚어 짧게 보완하세요. 3문장 이내로, 누구의 의견에 반응하는지 명시하세요.',
+    finalTemplate: '아래 형식으로 아주 짧게 작성하세요:\n\n📊 핵심 합의점 2가지\n1. \n2. \n\n⚠️ 남은 리스크 1가지\n- \n\n✅ 즉시 실행 3단계\n- \n- \n- ',
+  },
+}
+
+const AUTO_DEBATE_PROFILE = normalizeAutoDebateProfile(process.env.AUTO_DEBATE_PROFILE)
+const ACTIVE_AUTO_DEBATE_PROFILE = AUTO_DEBATE_PROFILE_DEFAULTS[AUTO_DEBATE_PROFILE] || AUTO_DEBATE_PROFILE_DEFAULTS.fast
+
+const readPositiveInt = (value, fallback, minimum = 1) => {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isNaN(parsed) ? fallback : Math.max(minimum, parsed)
+}
+
+const readNonNegativeInt = (value, fallback) => {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isNaN(parsed) ? fallback : Math.max(0, parsed)
+}
+
+const AUTO_DEBATE_MAX_ROUNDS = readPositiveInt(process.env.AUTO_DEBATE_MAX_ROUNDS, ACTIVE_AUTO_DEBATE_PROFILE.maxRounds, 1)
+const AUTO_DEBATE_MIN_ROUNDS = Math.min(
+  AUTO_DEBATE_MAX_ROUNDS,
+  readPositiveInt(process.env.AUTO_DEBATE_MIN_ROUNDS, Math.min(ACTIVE_AUTO_DEBATE_PROFILE.minRounds, AUTO_DEBATE_MAX_ROUNDS), 1)
+)
+const AUTO_DEBATE_MEMBER_MAX_TOKENS = readPositiveInt(process.env.AUTO_DEBATE_MEMBER_MAX_TOKENS, ACTIVE_AUTO_DEBATE_PROFILE.memberMaxTokens, 64)
+const AUTO_DEBATE_FINAL_MAX_TOKENS = readPositiveInt(process.env.AUTO_DEBATE_FINAL_MAX_TOKENS, ACTIVE_AUTO_DEBATE_PROFILE.finalMaxTokens, 96)
+const AUTO_DEBATE_CONSENSUS_MAX_TOKENS = readPositiveInt(process.env.AUTO_DEBATE_CONSENSUS_MAX_TOKENS, ACTIVE_AUTO_DEBATE_PROFILE.consensusMaxTokens, 4)
+const AUTO_DEBATE_SEARCH_RESULT_COUNT = readPositiveInt(process.env.AUTO_DEBATE_SEARCH_RESULT_COUNT, ACTIVE_AUTO_DEBATE_PROFILE.searchResultCount, 1)
+const AUTO_DEBATE_SEARCH_SNIPPET_CHARS = readPositiveInt(process.env.AUTO_DEBATE_SEARCH_SNIPPET_CHARS, ACTIVE_AUTO_DEBATE_PROFILE.searchSnippetChars, 60)
+const AUTO_DEBATE_MEMORY_LIMIT = readPositiveInt(process.env.AUTO_DEBATE_MEMORY_LIMIT, ACTIVE_AUTO_DEBATE_PROFILE.memoryLimit, 1)
+const AUTO_DEBATE_MEMORY_CHARS = readPositiveInt(process.env.AUTO_DEBATE_MEMORY_CHARS, ACTIVE_AUTO_DEBATE_PROFILE.memoryChars, 40)
+const AUTO_DEBATE_OPINION_CHARS = readPositiveInt(process.env.AUTO_DEBATE_OPINION_CHARS, ACTIVE_AUTO_DEBATE_PROFILE.opinionChars, 60)
+const AUTO_DEBATE_CONSENSUS_CHARS = readPositiveInt(process.env.AUTO_DEBATE_CONSENSUS_CHARS, ACTIVE_AUTO_DEBATE_PROFILE.consensusChars, 40)
+const AUTO_DEBATE_FINAL_SUMMARY_CHARS = readPositiveInt(process.env.AUTO_DEBATE_FINAL_SUMMARY_CHARS, ACTIVE_AUTO_DEBATE_PROFILE.finalSummaryChars, 40)
+const AUTO_DEBATE_TURN_DELAY_MS = readNonNegativeInt(process.env.AUTO_DEBATE_TURN_DELAY_MS, ACTIVE_AUTO_DEBATE_PROFILE.turnDelayMs)
+const MAX_RETRIES = readPositiveInt(process.env.AUTO_DEBATE_MAX_RETRIES, ACTIVE_AUTO_DEBATE_PROFILE.maxRetries, 1)
+const AUTO_DEBATE_INITIAL_PROMPT = ACTIVE_AUTO_DEBATE_PROFILE.initialPrompt
+const AUTO_DEBATE_DEBATE_PROMPT = ACTIVE_AUTO_DEBATE_PROFILE.debatePrompt
+const AUTO_DEBATE_FINAL_TEMPLATE = ACTIVE_AUTO_DEBATE_PROFILE.finalTemplate
+
+const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim()
+const trimText = (value = '', limit = 120) => cleanText(String(value || '').slice(0, limit))
+
+const sentenceSplit = (value = '') => String(value || '')
+  .split(/(?<=[.!?。])\s+|\n+/)
+  .map((part) => cleanText(part.replace(/^[-•*#]+\s*/, '')))
+  .filter(Boolean)
+
+const buildOpinionSummary = (value = '') => {
+  const sentences = sentenceSplit(value)
+    .filter((line) => line.length >= 12)
+    .slice(0, 2)
+    .map((line) => trimText(line, AUTO_DEBATE_OPINION_CHARS))
+
+  if (sentences.length > 0) return sentences.join(' / ')
+  return trimText(value, AUTO_DEBATE_OPINION_CHARS)
+}
+
 const DEFAULT_NEURO_CONFIG = {
   D: 0.2,
   C: 0.1,
@@ -276,9 +376,13 @@ const TOPIC_POOL = [
 
 // ── Groq 호출 (429 자동 재시도) ──────────────────────────
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
-const MAX_RETRIES = 7
 
-const groqChat = async (systemPrompt, userMessage, maxTokens = 400) => {
+const sleepBetweenTurns = async (index, total) => {
+  if (AUTO_DEBATE_TURN_DELAY_MS <= 0 || index >= total - 1) return
+  await sleep(AUTO_DEBATE_TURN_DELAY_MS)
+}
+
+const groqChat = async (systemPrompt, userMessage, maxTokens = AUTO_DEBATE_MEMBER_MAX_TOKENS) => {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const res = await fetch(GROQ_URL, {
       method: 'POST',
@@ -322,10 +426,12 @@ const searchTopic = async (topic) => {
     const res = await fetch('https://google.serper.dev/search', {
       method: 'POST',
       headers: { 'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: topic, num: 3, hl: 'ko', gl: 'kr' }),
+      body: JSON.stringify({ q: topic, num: AUTO_DEBATE_SEARCH_RESULT_COUNT, hl: 'ko', gl: 'kr' }),
     })
     const data = await res.json()
-    const snippets = (data.organic || []).slice(0, 3).map((r, i) => `${i+1}. ${r.title}: ${r.snippet}`)
+    const snippets = (data.organic || [])
+      .slice(0, AUTO_DEBATE_SEARCH_RESULT_COUNT)
+      .map((r, i) => `${i + 1}. ${trimText(r.title, 80)}: ${trimText(r.snippet, AUTO_DEBATE_SEARCH_SNIPPET_CHARS)}`)
     return snippets.length ? `[실시간 검색 결과]\n${snippets.join('\n')}\n` : ''
   } catch { return '' }
 }
@@ -338,24 +444,24 @@ const getMemories = async (godId) => {
     .eq('god_id', godId)
     .eq('status', 'active')
     .order('created_at', { ascending: false })
-    .limit(5)
+    .limit(AUTO_DEBATE_MEMORY_LIMIT)
 
   if (!data || data.length === 0) return ''
 
   const lines = data.map(m => {
     const days = Math.floor((Date.now() - new Date(m.created_at)) / 86400000)
-    return `[${days === 0 ? '오늘' : days + '일 전'}] "${m.topic}": ${m.my_opinion?.slice(0, 150)}`
+    return `[${days === 0 ? '오늘' : days + '일 전'}] "${trimText(m.topic, 48)}": ${trimText(m.my_opinion, AUTO_DEBATE_MEMORY_CHARS)}`
   })
   return `[과거 기억]\n${lines.join('\n')}\n`
 }
 
 // ── 합의 체크 ─────────────────────────────────────────────
 const checkConsensus = async (topic, messages) => {
-  const summary = messages.map(m => `[${m.god}]: ${m.content.slice(0, 100)}`).join('\n')
+  const summary = messages.map(m => `[${m.god}]: ${buildOpinionSummary(m.content).slice(0, AUTO_DEBATE_CONSENSUS_CHARS)}`).join('\n')
   const answer = await groqChat(
     GODS.find(g => g.id === 'cdo').prompt,
     `토론 주제: ${topic}\n\n${summary}\n\n합의가 도출되었습니까? "예" 또는 "아니오"로만 답하세요.`,
-    5
+    AUTO_DEBATE_CONSENSUS_MAX_TOKENS
   )
   return answer.trim().startsWith('예')
 }
@@ -363,36 +469,46 @@ const checkConsensus = async (topic, messages) => {
 // ── 메인 토론 실행 ────────────────────────────────────────
 const runDebate = async (topic) => {
   console.log(`\n🚀 토론 시작: "${topic}"`)
+  console.log(`⚙️ auto-debate profile: ${AUTO_DEBATE_PROFILE} (rounds=${AUTO_DEBATE_MAX_ROUNDS}, tokens=${AUTO_DEBATE_MEMBER_MAX_TOKENS}, delay=${AUTO_DEBATE_TURN_DELAY_MS}ms)`)
   const messages = []
 
   // 검색 (공통)
   const searchCtx = await searchTopic(topic)
+  const memoryContextByGod = new Map(await Promise.all(
+    GODS.map(async (god) => [god.id, await getMemories(god.id)])
+  ))
 
   // Round 1
   console.log('📢 Round 1 — 초기 의견')
-  for (const god of GODS) {
-    const memCtx = await getMemories(god.id)
-    const userMsg = [memCtx, searchCtx, `주제: ${topic}\n\n당신의 전문 분야 관점에서 초기 의견을 제시하세요.`].filter(Boolean).join('\n')
+  for (const [index, god] of GODS.entries()) {
+    const memCtx = memoryContextByGod.get(god.id) || ''
+    const userMsg = [
+      memCtx,
+      searchCtx,
+      `주제: ${topic}\n\n${AUTO_DEBATE_INITIAL_PROMPT}`
+    ].filter(Boolean).join('\n')
     const content = await groqChat(god.prompt, userMsg)
     messages.push({ round: 1, godId: god.id, god: god.name, content, timestamp: new Date().toISOString() })
     console.log(`  ✅ ${god.name}`)
+    await sleepBetweenTurns(index, GODS.length)
   }
 
-  // Round 2~4 (동적 합의)
+  // Round 2~N (동적 합의)
   let finalRound = 1
-  for (let round = 2; round <= 4; round++) {
+  for (let round = 2; round <= AUTO_DEBATE_MAX_ROUNDS; round++) {
     console.log(`📢 Round ${round} — 토론`)
-    for (const god of GODS) {
+    for (const [index, god] of GODS.entries()) {
       const others = messages.filter(m => m.round === round - 1 && m.godId !== god.id)
-      const opinionsText = others.map(o => `[${o.god}]: ${o.content.slice(0, 200)}`).join('\n\n')
-      const userMsg = `주제: ${topic}\n\n다른 임원 의견:\n${opinionsText}\n\n동의/반박/보완하며 토론하세요.`
+      const opinionsText = others.map(o => `[${o.god}]: ${buildOpinionSummary(o.content)}`).join('\n\n')
+      const userMsg = `주제: ${topic}\n\n다른 임원 의견:\n${opinionsText}\n\n${AUTO_DEBATE_DEBATE_PROMPT}`
       const content = await groqChat(god.prompt, userMsg)
       messages.push({ round, godId: god.id, god: god.name, content, timestamp: new Date().toISOString() })
       console.log(`  ✅ ${god.name}`)
+      await sleepBetweenTurns(index, GODS.length)
     }
     finalRound = round
 
-    if (round >= 2) {
+    if (round >= AUTO_DEBATE_MIN_ROUNDS) {
       const roundMsgs = messages.filter(m => m.round === round)
       const reached = await checkConsensus(topic, roundMsgs)
       if (reached) { console.log(`🤝 Round ${round}에서 합의 달성!`); break }
@@ -403,12 +519,12 @@ const runDebate = async (topic) => {
   console.log('📊 최종 합의안 생성 중...')
   const lastSummary = messages
     .filter(m => m.round === finalRound)
-    .map(m => `[${m.god}]: ${m.content.slice(0, 150)}`)
+    .map(m => `[${m.god}]: ${buildOpinionSummary(m.content).slice(0, AUTO_DEBATE_FINAL_SUMMARY_CHARS)}`)
     .join('\n')
   const consensus = await groqChat(
     `당신은 AI 기업의 최고 데이터 책임자(CDO) Oracle입니다. 반드시 한국어로만 작성하세요. 영어, 중국어 등 다른 언어는 절대 사용하지 마세요. 문장을 끝까지 완성하세요.`,
-    `반드시 한국어로만 작성하세요. 문장을 중간에 끊지 말고 완전하게 작성하세요.\n\n주제: ${topic}\n\n최종 라운드 요약:\n${lastSummary}\n\n아래 형식으로 작성하세요:\n\n📊 핵심 합의점 3가지\n1. \n2. \n3. \n\n⚡ 주요 이견\n\n✅ 권고사항\n- 단기:\n- 중기:\n- 장기:`,
-    800
+    `반드시 한국어로만 작성하세요. 문장을 중간에 끊지 말고 완전하게 작성하세요.\n\n주제: ${topic}\n\n최종 라운드 요약:\n${lastSummary}\n\n${AUTO_DEBATE_FINAL_TEMPLATE}`,
+    AUTO_DEBATE_FINAL_MAX_TOKENS
   )
 
   // Supabase 저장

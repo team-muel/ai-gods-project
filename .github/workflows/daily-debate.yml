@@ -52,6 +52,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          AUTO_DEBATE_PROFILE: 'ultra-light'
         run: node scripts/auto-debate.mjs
 
       - name: 토론 결과 자동 커밋
