@@ -10,6 +10,7 @@ import {
   startGoogleOAuth,
   submitArtifactFeedback,
 } from '../../services/workbenchService';
+import { searchWeb } from '../../services/searchService';
 import { extractVideoId, fetchTranscript, isYoutubeUrl } from '../../services/youtubeService';
 
 const MODE_CARDS = [
@@ -148,6 +149,12 @@ const DEBATE_USAGE_OPTIONS = [
   { id: 'strong', label: '강하게 참조', note: '기존 토론 인사이트를 적극 반영' },
 ];
 
+const SECTION_CITATION_OPTIONS = [
+  { id: 'off', label: '인용 안 함', note: '이 항목은 메시지와 구조 중심으로 작성합니다.' },
+  { id: 'optional', label: '선택 인용', note: '필요한 주장에만 논문이나 자료를 보조적으로 붙입니다.' },
+  { id: 'required', label: '인용 필수', note: '핵심 주장마다 논문이나 자료 근거를 명시적으로 연결합니다.' },
+];
+
 const DOMAIN_LIBRARY = [
   {
     id: 'it',
@@ -274,6 +281,7 @@ const DEFAULT_DOC_BRIEF = {
   writingNote: '',
   toneNote: '',
   outlineTitles: [],
+  sectionPlans: [],
   debateUsage: 'auto',
 };
 
@@ -293,10 +301,12 @@ const DEFAULT_PPT_BRIEF = {
   writingNote: '',
   toneNote: '',
   outlineTitles: [],
+  sectionPlans: [],
   debateUsage: 'auto',
 };
 
 const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
+const cleanFreeformText = (value = '') => String(value || '').replace(/\r/g, '').trim();
 
 const getDomainEntry = (domainId = 'other') => DOMAIN_LIBRARY.find((item) => item.id === domainId) || DOMAIN_LIBRARY[DOMAIN_LIBRARY.length - 1];
 const getThemeEntry = (themeId = 'business') => THEME_OPTIONS.find((item) => item.id === themeId) || THEME_OPTIONS[0];
@@ -307,6 +317,7 @@ const getLanguageEntry = (languageId = 'ko') => LANGUAGE_OPTIONS.find((item) => 
 const getVisualPresetEntry = (presetId = 'bee-happy') => VISUAL_PRESET_OPTIONS.find((item) => item.id === presetId) || VISUAL_PRESET_OPTIONS[0];
 const getImageSourceEntry = (sourceId = 'ai') => IMAGE_SOURCE_OPTIONS.find((item) => item.id === sourceId) || IMAGE_SOURCE_OPTIONS[0];
 const getImageStylePresetEntry = (presetId = 'bold-poster') => IMAGE_STYLE_PRESET_OPTIONS.find((item) => item.id === presetId) || IMAGE_STYLE_PRESET_OPTIONS[0];
+const getSectionCitationOptionEntry = (citationMode = 'optional') => SECTION_CITATION_OPTIONS.find((item) => item.id === citationMode) || SECTION_CITATION_OPTIONS[1];
 
 const getCardCount = (value, fallback = 6) => {
   const parsed = Number.parseInt(value, 10);
@@ -363,6 +374,167 @@ const buildOutlinePreview = (mode, brief = {}) => {
   });
 };
 
+const buildDefaultSectionCitationMode = ({ title = '', index = 0 } = {}) => {
+  const normalized = cleanText(title).toLowerCase();
+  if (index === 0 || /표지|cover|title/.test(normalized)) return 'off';
+  if (/참고|references|reference|bibliography|sources|출처/.test(normalized)) return 'required';
+  return 'optional';
+};
+
+const buildSectionContentPlaceholder = ({ mode = 'docs', title = '', index = 0, domainLabel = '일반' } = {}) => {
+  const normalized = cleanText(title).toLowerCase();
+
+  if (index === 0 || /표지|cover|title/.test(normalized)) {
+    return mode === 'ppt'
+      ? '발표 제목, 청중, 발표 목적, 핵심 메시지를 한 줄로 정리'
+      : '문서 제목, 작성 목적, 제출 맥락, 대상 독자를 짧게 정리';
+  }
+  if (/summary|executive|요약|핵심 인사이트|insight/.test(normalized)) {
+    return `${domainLabel} 관점에서 가장 먼저 전달할 핵심 주장 2~3개를 정리`;
+  }
+  if (/배경|background|맥락|question|문제 제기/.test(normalized)) {
+    return '왜 이 주제를 다루는지, 현재 상황과 문제 배경을 설명';
+  }
+  if (/분석|analysis|findings|evidence|비교/.test(normalized)) {
+    return '핵심 근거, 비교 기준, 데이터나 사례 해석을 중심으로 구성';
+  }
+  if (/권고|recommend|next|ask|결론|takeaway/.test(normalized)) {
+    return '최종 판단, 실행안, 다음 단계, 의사결정 포인트를 정리';
+  }
+  if (/참고|reference|sources|bibliography|출처/.test(normalized)) {
+    return '본문에서 사용할 논문, 보고서, 기사, 데이터 출처를 정리';
+  }
+
+  return mode === 'ppt'
+    ? `${cleanText(title) || `슬라이드 ${index + 1}`}에서 전달할 headline과 supporting bullet 방향을 적기`
+    : `${cleanText(title) || `섹션 ${index + 1}`}에서 다룰 주장, 사례, 근거 방향을 적기`;
+};
+
+const buildSectionCitationPlaceholder = ({ overview = '', title = '' } = {}) => cleanText([overview, title, '관련 논문 / review / benchmark / survey'].join(' ')).slice(0, 120);
+
+const createCitationCandidateId = (paper = {}) => cleanText(paper?.id || paper?.link || paper?.url || paper?.title || '').toLowerCase().slice(0, 240);
+
+const normalizeSectionCitations = (items = []) => {
+  const nextItems = [];
+  const seen = new Set();
+
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const id = createCitationCandidateId(item);
+    const title = cleanText(item?.title || '');
+    if (!id || !title || seen.has(id)) return;
+
+    seen.add(id);
+    nextItems.push({
+      id,
+      title,
+      link: cleanText(item?.link || item?.url || ''),
+      year: cleanText(item?.year || ''),
+      venue: cleanText(item?.venue || item?.sourceLabel || ''),
+      scholarlyScore: Number.isFinite(Number(item?.scholarlyScore)) ? Math.round(Number(item.scholarlyScore)) : 0,
+    });
+  });
+
+  return nextItems.slice(0, 4);
+};
+
+const buildPaperPool = (searchData = {}) => {
+  const academicResults = Array.isArray(searchData?.academicResults) ? searchData.academicResults : [];
+  const nextPool = [];
+  const seen = new Set();
+
+  academicResults.forEach((result) => {
+    const paper = {
+      id: createCitationCandidateId(result),
+      title: cleanText(result?.title || result?.link || '논문'),
+      link: cleanText(result?.link || result?.url || ''),
+      snippet: cleanText(result?.snippet || ''),
+      year: cleanText(result?.metadata?.year || ''),
+      venue: cleanText(result?.metadata?.venue || result?.metadata?.sourceLabel || result?.provider || ''),
+      authors: Array.isArray(result?.metadata?.authors) ? result.metadata.authors.slice(0, 3).join(', ') : '',
+      sourceLabel: cleanText(result?.metadata?.sourceLabel || result?.provider || ''),
+      scholarlyScore: Number.isFinite(Number(result?.metadata?.scholarlyScore || result?.metadata?.rankingSignals?.total))
+        ? Math.round(Number(result.metadata?.scholarlyScore || result.metadata?.rankingSignals?.total))
+        : 0,
+    };
+
+    if (!paper.id || !paper.title || seen.has(paper.id)) return;
+    seen.add(paper.id);
+    nextPool.push(paper);
+  });
+
+  return nextPool.slice(0, 8);
+};
+
+const buildPaperMetaLine = (paper = {}) => [
+  paper.year,
+  paper.venue,
+  paper.authors,
+  paper.scholarlyScore > 0 ? `scholar ${paper.scholarlyScore}/100` : '',
+].filter(Boolean).join(' · ');
+
+const buildSectionPlans = (mode, brief = {}) => {
+  const outlineTitles = buildOutlinePreview(mode, brief);
+  const existingPlans = Array.isArray(brief.sectionPlans) ? brief.sectionPlans : [];
+  const domainLabel = getDomainEntry(brief.domain).label;
+
+  return outlineTitles.map((fallbackTitle, index) => {
+    const current = existingPlans[index] && typeof existingPlans[index] === 'object' ? existingPlans[index] : {};
+    return {
+      fallbackTitle,
+      title: typeof current.title === 'string' ? current.title : fallbackTitle,
+      contentNote: typeof current.contentNote === 'string' ? current.contentNote : '',
+      contentPlaceholder: buildSectionContentPlaceholder({
+        mode,
+        title: cleanText(current.title || fallbackTitle) || fallbackTitle,
+        index,
+        domainLabel,
+      }),
+      citationMode: SECTION_CITATION_OPTIONS.some((item) => item.id === current.citationMode)
+        ? current.citationMode
+        : buildDefaultSectionCitationMode({ title: fallbackTitle, index }),
+      citationQuery: typeof current.citationQuery === 'string' ? current.citationQuery : '',
+      citationPlaceholder: buildSectionCitationPlaceholder({
+        overview: brief.overview,
+        title: cleanText(current.title || fallbackTitle) || fallbackTitle,
+      }),
+      citations: normalizeSectionCitations(current.citations),
+    };
+  });
+};
+
+const buildSectionPlanInstructionLines = (sectionPlans = [], { mode = 'docs' } = {}) => {
+  const blockLabel = mode === 'ppt' ? '슬라이드' : '섹션';
+
+  return (Array.isArray(sectionPlans) ? sectionPlans : []).map((plan, index) => {
+    const title = cleanText(plan?.title || '') || plan?.fallbackTitle || `${blockLabel} ${index + 1}`;
+    const citationOption = getSectionCitationOptionEntry(plan?.citationMode);
+    const citationTitles = normalizeSectionCitations(plan?.citations).map((item) => item.title).slice(0, 3);
+
+    return [
+      `${blockLabel} ${index + 1}: ${title}`,
+      cleanText(plan?.contentNote || '') ? `들어갈 내용: ${cleanText(plan.contentNote)}` : '',
+      `인용 사용: ${citationOption.label}`,
+      cleanText(plan?.citationQuery || '') ? `찾을 논문/자료 방향: ${cleanText(plan.citationQuery)}` : '',
+      citationTitles.length > 0 ? `우선 인용 후보: ${citationTitles.join(' ; ')}` : '',
+    ].filter(Boolean).join(' | ');
+  });
+};
+
+const buildSuggestedPapersForPlan = ({ plan = {}, paperPool = [], overview = '' } = {}) => {
+  const queryText = cleanText([overview, plan?.title, plan?.contentNote, plan?.citationQuery].join(' ')).toLowerCase();
+  const tokens = queryText.split(/\s+/).filter((token) => token.length >= 2);
+
+  return (Array.isArray(paperPool) ? paperPool : [])
+    .map((paper) => {
+      const haystack = cleanText([paper.title, paper.snippet, paper.venue, paper.authors, paper.sourceLabel].join(' ')).toLowerCase();
+      const score = tokens.reduce((sum, token) => (haystack.includes(token) ? sum + (token.length >= 4 ? 10 : 5) : sum), Number(paper.scholarlyScore || 0));
+      return { paper, score };
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3)
+    .map((entry) => entry.paper);
+};
+
 const buildModeSubtitle = (mode, brief = {}) => {
   const domainLabel = getDomainEntry(brief.domain).label;
   const themeLabel = getThemeEntry(brief.theme).label;
@@ -370,7 +542,7 @@ const buildModeSubtitle = (mode, brief = {}) => {
   return `${domainLabel} · ${themeLabel} · 텍스트 ${densityLabel}`;
 };
 
-const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], hasDebateContext = false } = {}) => {
+const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], sectionPlans = [], hasDebateContext = false } = {}) => {
   const modeLabel = mode === 'ppt' ? '발표자료' : '문서';
   const domainEntry = getDomainEntry(brief.domain);
   const themeEntry = getThemeEntry(brief.theme);
@@ -400,6 +572,7 @@ const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], hasDebat
     brief.writingNote ? `추가 작성 메모: ${cleanText(brief.writingNote)}` : '',
     brief.toneNote ? `톤 메모: ${cleanText(brief.toneNote)}` : '',
     outlineTitles.length > 0 ? `권장 윤곽선: ${outlineTitles.join(' -> ')}` : '',
+    ...buildSectionPlanInstructionLines(sectionPlans, { mode }),
     brief.debateUsage === 'off'
       ? '토론 내용은 기본 입력으로 사용하지 말고 브리프와 윤곽선만으로 결과물을 설계하세요.'
       : brief.debateUsage === 'strong'
@@ -646,6 +819,10 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const [docsBrief, setDocsBrief] = useState(DEFAULT_DOC_BRIEF);
   const [pptBrief, setPptBrief] = useState(DEFAULT_PPT_BRIEF);
   const [builderStage, setBuilderStage] = useState({ docs: 'overview', ppt: 'overview' });
+  const [paperPools, setPaperPools] = useState({ docs: [], ppt: [] });
+  const [paperPoolLoading, setPaperPoolLoading] = useState({ docs: false, ppt: false });
+  const [paperPoolQuery, setPaperPoolQuery] = useState({ docs: '', ppt: '' });
+  const [paperPoolError, setPaperPoolError] = useState({ docs: '', ppt: '' });
   const [debateInput, setDebateInput] = useState('');
   const [focusInput, setFocusInput] = useState('');
   const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
@@ -684,6 +861,8 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
   const docsOutlinePreview = useMemo(() => buildOutlinePreview('docs', docsBrief), [docsBrief]);
   const pptOutlinePreview = useMemo(() => buildOutlinePreview('ppt', pptBrief), [pptBrief]);
+  const docsSectionPlans = useMemo(() => buildSectionPlans('docs', docsBrief), [docsBrief]);
+  const pptSectionPlans = useMemo(() => buildSectionPlans('ppt', pptBrief), [pptBrief]);
   const docsPromptRecommendations = useMemo(() => buildPromptRecommendations('docs', docsBrief.overview), [docsBrief.overview]);
   const pptPromptRecommendations = useMemo(() => buildPromptRecommendations('ppt', pptBrief.overview), [pptBrief.overview]);
   const isLoading = isDiscussing || isFetchingTranscript;
@@ -740,6 +919,58 @@ export default function QuestionPanel({ onOpenDashboard }) {
     };
   }, []);
 
+  const fetchPaperPool = async (mode, { force = false } = {}) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    const overview = cleanText(brief.overview);
+    if (overview.length < 6) {
+      setPaperPools((state) => ({ ...state, [mode]: [] }));
+      setPaperPoolError((state) => ({ ...state, [mode]: '' }));
+      setPaperPoolQuery((state) => ({ ...state, [mode]: '' }));
+      return;
+    }
+
+    const query = cleanText([overview, getDomainEntry(brief.domain).label, '논문'].join(' '));
+    if (!force && paperPoolQuery[mode] === query && (paperPools[mode].length > 0 || paperPoolError[mode])) {
+      return;
+    }
+
+    setPaperPoolLoading((state) => ({ ...state, [mode]: true }));
+    setPaperPoolError((state) => ({ ...state, [mode]: '' }));
+
+    try {
+      const searchData = await searchWeb(query, 8);
+      const nextPool = buildPaperPool(searchData);
+      setPaperPools((state) => ({ ...state, [mode]: nextPool }));
+      setPaperPoolQuery((state) => ({ ...state, [mode]: query }));
+      setPaperPoolError((state) => ({
+        ...state,
+        [mode]: nextPool.length > 0 ? '' : '현재 개요 기준으로 바로 쓸 학술 결과를 찾지 못했습니다. 직접 검색어를 적어도 됩니다.',
+      }));
+    } catch {
+      setPaperPoolError((state) => ({ ...state, [mode]: '인용 후보 논문을 불러오지 못했습니다. 잠시 후 다시 시도하세요.' }));
+    } finally {
+      setPaperPoolLoading((state) => ({ ...state, [mode]: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (!['details', 'advanced'].includes(builderStage.docs) || cleanText(docsBrief.overview).length < 6) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      fetchPaperPool('docs');
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [builderStage.docs, docsBrief.overview, docsBrief.domain]);
+
+  useEffect(() => {
+    if (!['details', 'advanced'].includes(builderStage.ppt) || cleanText(pptBrief.overview).length < 6) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      fetchPaperPool('ppt');
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [builderStage.ppt, pptBrief.overview, pptBrief.domain]);
+
   useEffect(() => {
     if (activeMode === 'docs') {
       setPreview({
@@ -791,6 +1022,29 @@ export default function QuestionPanel({ onOpenDashboard }) {
     setPptBrief((state) => ({ ...state, ...updates }));
   };
 
+  const updateSectionPlans = (mode, updater) => {
+    const currentPlans = mode === 'docs' ? docsSectionPlans : pptSectionPlans;
+    const nextPlans = typeof updater === 'function' ? updater(currentPlans) : updater;
+    const serializedPlans = (Array.isArray(nextPlans) ? nextPlans : currentPlans).map((plan, index) => {
+      const fallbackTitle = currentPlans[index]?.fallbackTitle || (mode === 'ppt' ? `슬라이드 ${index + 1}` : `섹션 ${index + 1}`);
+      return {
+        title: typeof plan?.title === 'string' ? plan.title : fallbackTitle,
+        contentNote: typeof plan?.contentNote === 'string' ? plan.contentNote : '',
+        citationMode: SECTION_CITATION_OPTIONS.some((item) => item.id === plan?.citationMode)
+          ? plan.citationMode
+          : buildDefaultSectionCitationMode({ title: fallbackTitle, index }),
+        citationQuery: typeof plan?.citationQuery === 'string' ? plan.citationQuery : '',
+        citations: normalizeSectionCitations(plan?.citations),
+      };
+    });
+
+    updateBrief(mode, {
+      sectionPlans: serializedPlans,
+      outlineTitles: serializedPlans.map((plan, index) => cleanText(plan.title) || currentPlans[index]?.fallbackTitle || (mode === 'ppt' ? `슬라이드 ${index + 1}` : `섹션 ${index + 1}`)),
+      cardCount: serializedPlans.length,
+    });
+  };
+
   const handleModeSelect = (mode) => {
     setActiveMode(mode);
     setPanelMessage('');
@@ -814,6 +1068,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
       textDensity: example.textDensity || 'balanced',
       domain: domainId,
       outlineTitles: [],
+      sectionPlans: [],
     });
     setPanelMessage(`${mode === 'docs' ? '문서' : 'PPT'} 브리프 예시를 채웠습니다. 필요한 부분만 수정해서 바로 생성할 수 있습니다.`);
   };
@@ -851,32 +1106,83 @@ export default function QuestionPanel({ onOpenDashboard }) {
   };
 
   const handleOutlineTitleChange = (mode, index, value) => {
-    const brief = mode === 'docs' ? docsBrief : pptBrief;
-    const resolvedOutline = buildOutlinePreview(mode, brief);
-    const nextOutline = [...resolvedOutline];
-    nextOutline[index] = value;
-    updateBrief(mode, { outlineTitles: nextOutline });
+    updateSectionPlans(mode, (plans) => {
+      const nextPlans = [...plans];
+      nextPlans[index] = { ...nextPlans[index], title: value };
+      return nextPlans;
+    });
   };
 
   const handleAddOutlineItem = (mode) => {
-    const brief = mode === 'docs' ? docsBrief : pptBrief;
-    const resolvedOutline = buildOutlinePreview(mode, brief);
-    const nextLength = Math.min(resolvedOutline.length + 1, 12);
-    const nextOutline = [...resolvedOutline, mode === 'docs' ? `추가 섹션 ${resolvedOutline.length + 1}` : `추가 슬라이드 ${resolvedOutline.length + 1}`].slice(0, nextLength);
-    updateBrief(mode, { outlineTitles: nextOutline, cardCount: nextLength });
+    updateSectionPlans(mode, (plans) => {
+      const nextLength = Math.min(plans.length + 1, 10);
+      const fallbackTitle = mode === 'docs' ? `추가 섹션 ${plans.length + 1}` : `추가 슬라이드 ${plans.length + 1}`;
+      return [
+        ...plans,
+        {
+          title: fallbackTitle,
+          contentNote: '',
+          citationMode: 'optional',
+          citationQuery: '',
+          citations: [],
+          fallbackTitle,
+        },
+      ].slice(0, nextLength);
+    });
   };
 
   const handleRemoveOutlineItem = (mode, index) => {
-    const brief = mode === 'docs' ? docsBrief : pptBrief;
-    const resolvedOutline = buildOutlinePreview(mode, brief);
-    const nextOutline = resolvedOutline.filter((_, itemIndex) => itemIndex !== index);
-    const nextCount = Math.max(4, nextOutline.length);
-    updateBrief(mode, { outlineTitles: nextOutline, cardCount: nextCount });
+    updateSectionPlans(mode, (plans) => plans.filter((_, itemIndex) => itemIndex !== index));
   };
 
   const handleResetAutoOutline = (mode) => {
-    updateBrief(mode, { outlineTitles: [] });
+    updateBrief(mode, { outlineTitles: [], sectionPlans: [] });
     setPanelMessage(mode === 'docs' ? '문서 윤곽선을 자동 생성 상태로 되돌렸습니다.' : 'PPT 윤곽선을 자동 생성 상태로 되돌렸습니다.');
+  };
+
+  const handleSectionContentNoteChange = (mode, index, value) => {
+    updateSectionPlans(mode, (plans) => {
+      const nextPlans = [...plans];
+      nextPlans[index] = { ...nextPlans[index], contentNote: value };
+      return nextPlans;
+    });
+  };
+
+  const handleSectionCitationModeChange = (mode, index, citationMode) => {
+    updateSectionPlans(mode, (plans) => {
+      const nextPlans = [...plans];
+      nextPlans[index] = {
+        ...nextPlans[index],
+        citationMode,
+        citations: citationMode === 'off' ? [] : nextPlans[index].citations,
+      };
+      return nextPlans;
+    });
+  };
+
+  const handleSectionCitationQueryChange = (mode, index, value) => {
+    updateSectionPlans(mode, (plans) => {
+      const nextPlans = [...plans];
+      nextPlans[index] = { ...nextPlans[index], citationQuery: value };
+      return nextPlans;
+    });
+  };
+
+  const handleToggleSectionCitationCandidate = (mode, index, paper) => {
+    updateSectionPlans(mode, (plans) => {
+      const nextPlans = [...plans];
+      const current = nextPlans[index];
+      const paperId = createCitationCandidateId(paper);
+      const currentCitations = normalizeSectionCitations(current.citations);
+      const hasExisting = currentCitations.some((item) => item.id === paperId);
+      nextPlans[index] = {
+        ...current,
+        citations: hasExisting
+          ? currentCitations.filter((item) => item.id !== paperId)
+          : [...currentCitations, paper].slice(0, 4),
+      };
+      return nextPlans;
+    });
   };
 
   const handleDebateSubmit = async (event) => {
@@ -928,7 +1234,8 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
   const handleGenerateArtifact = async (mode) => {
     const brief = mode === 'docs' ? docsBrief : pptBrief;
-    const outlineTitles = mode === 'docs' ? docsOutlinePreview : pptOutlinePreview;
+    const sectionPlans = mode === 'docs' ? docsSectionPlans : pptSectionPlans;
+    const outlineTitles = sectionPlans.map((plan) => cleanText(plan.title) || plan.fallbackTitle);
     const hasDebateContext = Boolean(debateSeedDossier || consensus || messages.length > 0);
     const useDebateContext = brief.debateUsage !== 'off' && hasDebateContext;
     const busyKey = mode === 'docs' ? 'docs' : 'ppt';
@@ -948,6 +1255,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
         mode,
         brief,
         outlineTitles,
+        sectionPlans,
         hasDebateContext: useDebateContext,
       });
 
@@ -977,6 +1285,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
           toneNote: cleanText(brief.toneNote),
           debateUsage: brief.debateUsage,
           outlineTitles,
+          sectionPlans: sectionPlans.map((plan) => ({
+            title: cleanText(plan.title) || plan.fallbackTitle,
+            contentNote: cleanFreeformText(plan.contentNote),
+            citationMode: plan.citationMode,
+            citationQuery: cleanText(plan.citationQuery),
+            citations: normalizeSectionCitations(plan.citations),
+          })),
           mode,
         },
         ...buildCitationOverrides({ mode, brief }),
@@ -1107,7 +1422,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
       <div style={{ border: '1px solid rgba(125, 211, 252, 0.14)', borderRadius: '14px', padding: '14px', background: 'rgba(2, 6, 23, 0.46)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
           <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em' }}>
-            VISUAL OUTLINE
+            STRUCTURE PREVIEW
           </div>
           <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(191, 248, 255, 0.58)', letterSpacing: '0.08em' }}>
             {themeLabel}
@@ -1447,7 +1762,8 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
   const renderBuilder = (mode) => {
     const brief = mode === 'docs' ? docsBrief : pptBrief;
-    const outlineTitles = mode === 'docs' ? docsOutlinePreview : pptOutlinePreview;
+    const sectionPlans = mode === 'docs' ? docsSectionPlans : pptSectionPlans;
+    const outlineTitles = sectionPlans.map((plan) => cleanText(plan.title) || plan.fallbackTitle);
     const domainEntry = getDomainEntry(brief.domain);
     const promptRecommendations = mode === 'docs' ? docsPromptRecommendations : pptPromptRecommendations;
     const artifact = mode === 'docs' ? artifacts?.report : artifacts?.slides;
@@ -1455,6 +1771,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
     const outputLabel = mode === 'docs' ? '문서' : 'PPT';
     const hasDebateContext = Boolean(debateSeedDossier || consensus || messages.length > 0);
     const stage = builderStage[mode] || 'overview';
+    const citationPaperPool = paperPools[mode] || [];
 
     if (stage === 'advanced') {
       return renderAdvancedBuilder(mode);
@@ -1544,13 +1861,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
               {mode === 'docs' ? 'DOCUMENT STUDIO' : 'DECK STUDIO'}
             </div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '18px', fontWeight: 700, color: '#f8fafc', marginBottom: '4px' }}>
-              {mode === 'docs' ? '브리프 기반 문서 설계' : '브리프 기반 PPT 설계'}
+              {mode === 'docs' ? '목차 / 내용 / 인용 설계' : '슬라이드 / 내용 / 인용 설계'}
             </div>
             <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: 'rgba(191, 248, 255, 0.62)', letterSpacing: '0.12em', marginBottom: '8px' }}>
-              STEP 2 / 2 · DETAILS
+              STEP 2 / 2 · CONTENT PLAN
             </div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.7)', lineHeight: 1.45 }}>
-              주제 개요를 바탕으로 독자, 도메인, 시각 테마, 텍스트 양, 이미지 사용 여부를 구체화합니다.
+              개요를 바탕으로 항목별로 무엇을 넣을지, 어떤 논문과 자료를 인용할지 먼저 설계한 뒤 결과물을 생성합니다.
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', minWidth: '200px' }}>
@@ -1566,7 +1883,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 300px) minmax(0, 1fr)', gap: '14px', alignItems: 'start' }}>
           <div style={{ display: 'grid', gap: '12px' }}>
             <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(15, 23, 42, 0.56)' }}>
               <div style={{ ...fieldLabelStyle, marginBottom: '8px' }}>주제 개요</div>
@@ -1612,10 +1929,6 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 {hasDebateContext ? DEBATE_USAGE_OPTIONS.find((item) => item.id === brief.debateUsage)?.note : '현재 저장된 토론 seed가 없습니다. 선택해도 브리프 기반 생성으로 동작합니다.'}
               </div>
             </div>
-          </div>
-
-          <div style={{ display: 'grid', gap: '12px' }}>
-            {renderOutlinePreview(mode, outlineTitles, brief.theme)}
 
             <div>
               <div style={fieldLabelStyle}>시각 테마</div>
@@ -1657,6 +1970,156 @@ export default function QuestionPanel({ onOpenDashboard }) {
               <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.66)' }}>
                 {getAiImageEntry(brief.aiImageMode).note}
               </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '12px' }}>
+            <div style={{ padding: '14px', borderRadius: '14px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(2, 6, 23, 0.44)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                <div>
+                  <div style={{ ...fieldLabelStyle, marginBottom: '6px' }}>CONTENTS PLAN</div>
+                  <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45 }}>
+                    목차 제목, 들어갈 내용, 인용 전략을 항목별로 확정합니다. 여기서 정한 구조가 바로 생성 프롬프트로 들어갑니다.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => handleResetAutoOutline(mode)} style={{ ...secondaryButtonStyle(false), width: 'auto' }}>
+                    자동 목차 복원
+                  </button>
+                  <button type="button" onClick={() => handleAddOutlineItem(mode)} disabled={sectionPlans.length >= 10} style={{ ...secondaryButtonStyle(sectionPlans.length >= 10), width: 'auto' }}>
+                    항목 추가
+                  </button>
+                  <button type="button" onClick={() => fetchPaperPool(mode, { force: true })} disabled={paperPoolLoading[mode]} style={{ ...secondaryButtonStyle(paperPoolLoading[mode]), width: 'auto' }}>
+                    {paperPoolLoading[mode] ? '논문 후보 갱신 중...' : '논문 후보 새로고침'}
+                  </button>
+                </div>
+              </div>
+
+              {paperPoolError[mode] && !citationPaperPool.length && (
+                <div style={{ marginBottom: '10px', padding: '10px 12px', borderRadius: '12px', background: 'rgba(30, 41, 59, 0.72)', border: '1px solid rgba(148, 163, 184, 0.16)', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#e2e8f0', lineHeight: 1.4 }}>
+                  {paperPoolError[mode]}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {sectionPlans.map((plan, index) => {
+                  const citationOption = getSectionCitationOptionEntry(plan.citationMode);
+                  const suggestedPapers = buildSuggestedPapersForPlan({ plan, paperPool: citationPaperPool, overview: brief.overview });
+                  const selectedCitationIds = new Set(normalizeSectionCitations(plan.citations).map((item) => item.id));
+
+                  return (
+                    <div key={`${plan.fallbackTitle}-${index}`} style={{ padding: '14px', borderRadius: '14px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.62)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                        <div>
+                          <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.12em', marginBottom: '4px' }}>
+                            {mode === 'ppt' ? `SLIDE ${index + 1}` : `SECTION ${index + 1}`}
+                          </div>
+                          <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.7)' }}>
+                            {mode === 'ppt' ? '이 슬라이드에서 전달할 메시지와 근거를 먼저 설계합니다.' : '이 섹션에 어떤 내용과 근거를 넣을지 먼저 설계합니다.'}
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => handleRemoveOutlineItem(mode, index)} disabled={sectionPlans.length <= 4} style={{ ...secondaryButtonStyle(sectionPlans.length <= 4), width: 'auto', padding: '8px 10px' }}>
+                          삭제
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'grid', gap: '10px' }}>
+                        <label>
+                          <span style={fieldLabelStyle}>목차 제목</span>
+                          <input value={plan.title} onChange={(event) => handleOutlineTitleChange(mode, index, event.target.value)} style={inputStyle} />
+                        </label>
+
+                        <label>
+                          <span style={fieldLabelStyle}>{mode === 'ppt' ? '이 슬라이드에 들어갈 내용' : '이 섹션에 들어갈 내용'}</span>
+                          <textarea
+                            value={plan.contentNote}
+                            onChange={(event) => handleSectionContentNoteChange(mode, index, event.target.value)}
+                            placeholder={plan.contentPlaceholder}
+                            rows={3}
+                            style={{ ...inputStyle, resize: 'vertical' }}
+                          />
+                        </label>
+
+                        <div>
+                          <div style={fieldLabelStyle}>인용 사용 방식</div>
+                          <div style={segmentedGridStyle}>
+                            {SECTION_CITATION_OPTIONS.map((item) => (
+                              <button key={item.id} type="button" onClick={() => handleSectionCitationModeChange(mode, index, item.id)} style={buildChipStyle(plan.citationMode === item.id, 'rgba(96, 165, 250, 0.38)')}>
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                          <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.66)' }}>
+                            {citationOption.note}
+                          </div>
+                        </div>
+
+                        {plan.citationMode !== 'off' && (
+                          <>
+                            <label>
+                              <span style={fieldLabelStyle}>찾을 논문 / 자료 방향</span>
+                              <input
+                                value={plan.citationQuery}
+                                onChange={(event) => handleSectionCitationQueryChange(mode, index, event.target.value)}
+                                placeholder={plan.citationPlaceholder}
+                                style={inputStyle}
+                              />
+                            </label>
+
+                            <div style={{ display: 'grid', gap: '8px' }}>
+                              <div style={fieldLabelStyle}>추천 인용 후보</div>
+                              {suggestedPapers.length > 0 ? suggestedPapers.map((paper) => (
+                                <div key={paper.id} style={{ padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(2, 6, 23, 0.62)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', fontWeight: 700, color: '#f8fafc', lineHeight: 1.35 }}>
+                                        {paper.title}
+                                      </div>
+                                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '11px', color: 'rgba(191, 219, 254, 0.72)', lineHeight: 1.35, marginTop: '4px' }}>
+                                        {buildPaperMetaLine(paper) || '메타데이터 없음'}
+                                      </div>
+                                    </div>
+                                    <button type="button" onClick={() => handleToggleSectionCitationCandidate(mode, index, paper)} style={{ ...secondaryButtonStyle(false), width: 'auto', padding: '8px 10px' }}>
+                                      {selectedCitationIds.has(paper.id) ? '제거' : '추가'}
+                                    </button>
+                                  </div>
+                                  {paper.snippet && (
+                                    <div style={{ marginTop: '6px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)', lineHeight: 1.4 }}>
+                                      {paper.snippet}
+                                    </div>
+                                  )}
+                                </div>
+                              )) : (
+                                <div style={{ padding: '10px 12px', borderRadius: '12px', border: '1px dashed rgba(148, 163, 184, 0.2)', color: 'rgba(226, 232, 240, 0.64)', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px' }}>
+                                  자동 추천 논문이 없으면 위 검색어에 직접 원하는 방향을 적고 생성해도 됩니다.
+                                </div>
+                              )}
+                            </div>
+
+                            {plan.citations.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                {plan.citations.map((paper) => (
+                                  <button key={paper.id} type="button" onClick={() => handleToggleSectionCitationCandidate(mode, index, paper)} style={{ ...buildChipStyle(true, 'rgba(52, 211, 153, 0.38)'), fontSize: '10px' }}>
+                                    {paper.title}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(8, 47, 73, 0.18)' }}>
+              <div style={{ ...fieldLabelStyle, marginBottom: '6px' }}>CURRENT STRUCTURE</div>
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45, marginBottom: '8px' }}>
+                현재 목차는 생성 시 우선 순서로 반영됩니다. 인용 후보는 전체 개요 기준으로 불러온 학술 결과 {citationPaperPool.length}건에서 추천됩니다.
+              </div>
+              {renderOutlinePreview(mode, outlineTitles, brief.theme)}
             </div>
           </div>
         </div>
@@ -1772,6 +2235,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
   const currentBuilderStage = (activeMode === 'docs' || activeMode === 'ppt') ? (builderStage[activeMode] || 'overview') : 'overview';
   const isBuilderOverviewStage = (activeMode === 'docs' || activeMode === 'ppt') && currentBuilderStage === 'overview';
+  const isBuilderDetailsStage = (activeMode === 'docs' || activeMode === 'ppt') && currentBuilderStage === 'details';
   const isBuilderAdvancedStage = (activeMode === 'docs' || activeMode === 'ppt') && currentBuilderStage === 'advanced';
 
   return (
@@ -1787,7 +2251,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
       padding: '18px',
       borderRadius: '18px',
       border: isBuilderAdvancedStage ? '1px solid rgba(191, 219, 254, 0.9)' : '1px solid rgba(125, 211, 252, 0.16)',
-      width: activeMode === 'home' ? '380px' : activeMode === 'debate' ? '430px' : isBuilderAdvancedStage ? 'calc(100vw - 40px)' : isBuilderOverviewStage ? '480px' : 'min(620px, calc(100vw - 40px))',
+      width: activeMode === 'home' ? '380px' : activeMode === 'debate' ? '430px' : isBuilderAdvancedStage ? 'calc(100vw - 40px)' : isBuilderOverviewStage ? '480px' : isBuilderDetailsStage ? 'min(1080px, calc(100vw - 40px))' : 'min(620px, calc(100vw - 40px))',
       maxHeight: '92vh',
       overflowY: 'auto',
       transition: 'width 0.25s ease, border-color 0.3s ease',
