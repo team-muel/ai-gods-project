@@ -596,22 +596,37 @@ const shuffleWithSeed = (items = [], random = Math.random) => {
   return nextItems;
 };
 
+const MIN_RECOMMENDATION_OVERVIEW_LENGTH = 6;
+const RECOMMENDATION_CARD_LIMIT = 4;
+
+const buildDisplayLabel = (value = '', maxLength = 20) => {
+  const normalized = cleanText(value)
+    .replace(/[·•◦○●]/g, ' ')
+    .replace(/[ㄱ-ㅎㅏ-ㅣ]{2,}$/g, '')
+    .trim();
+
+  if (!normalized) return '';
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trim()}…` : normalized;
+};
+
 const normalizeRecommendationTopic = (overview = '', domainLabel = '일반') => {
   const normalized = cleanText(overview);
-  if (!normalized) return `${domainLabel} 주제`;
+  if (normalized.length < MIN_RECOMMENDATION_OVERVIEW_LENGTH) return '';
 
-  if (normalized.length > 80 && /(기준으로|최종 결과물|인용은|구성하고|만들고)/.test(normalized)) {
-    const matched = normalized.match(/^(.+?)(?:를|을)\s/);
-    if (matched?.[1]) return cleanText(matched[1]);
-  }
+  const stripped = normalized
+    .replace(/\s*(문서|보고서|브리프|발표자료|슬라이드|deck|덱)\s*(로|으로)\s*(정리|구성|작성|만들기|제작).*/i, '')
+    .replace(/\s*(을|를)\s*(경영진|투자자|고객|교수|심사자|청중|독자).*(보고서|브리프|문서|발표자료|deck|덱).*/i, '')
+    .replace(/\s*(에 대해|에 관한|에 대한)\s*/g, ' ')
+    .trim();
 
-  return normalized;
+  const candidate = stripped || normalized || `${domainLabel} 주제`;
+  return candidate.length > 32 ? `${candidate.slice(0, 32).trim()}…` : candidate;
 };
 
 const DOC_RECOMMENDATION_PROFILES = [
   {
     id: 'executive-brief',
-    label: 'Executive Brief',
+    label: '경영진 브리프',
     frame: '브리프 문서',
     emphasis: '결론과 판단이 첫 문단에 바로 보이게 정리',
     structure: '문제-판단-근거-실행 순서로 구성',
@@ -619,10 +634,11 @@ const DOC_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '첫 문단에서 결론을 먼저 제시하고, 핵심 근거와 실행 포인트를 분리해서 정리',
     toneNote: '임원 보고용으로 짧고 단정한 톤 유지',
+    audiences: ['경영진', '팀 리더', '의사결정자'],
   },
   {
     id: 'evidence-report',
-    label: 'Evidence Report',
+    label: '근거 중심 보고서',
     frame: '분석 보고서',
     emphasis: '주장과 근거가 섞이지 않게 단락을 분리',
     structure: '배경-근거-해석-시사점 순서로 구성',
@@ -630,10 +646,11 @@ const DOC_RECOMMENDATION_PROFILES = [
     textDensity: 'dense',
     writingNote: '핵심 근거마다 출처 후보를 붙일 수 있게 문단을 나누고, 사례와 데이터는 따로 정리',
     toneNote: '근거 중심으로 차분하고 정확한 톤 유지',
+    audiences: ['교수 / 심사자', '연구 세미나 청중', '분석팀'],
   },
   {
     id: 'strategy-memo',
-    label: 'Strategy Memo',
+    label: '전략 메모',
     frame: '전략 메모',
     emphasis: '배경보다 선택지와 우선순위가 먼저 보이게 재정리',
     structure: '현황-선택지-우선순위-권고안 순서로 구성',
@@ -641,10 +658,11 @@ const DOC_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '선택지 비교와 우선순위를 표처럼 읽히게 정리하고 마지막에 권고안을 명확히 제시',
     toneNote: '전략 검토 메모처럼 빠르게 읽히는 톤 유지',
+    audiences: ['전략팀', '제품팀 / PM', '실무 리더'],
   },
   {
     id: 'research-note',
-    label: 'Research Note',
+    label: '리서치 노트',
     frame: '리서치 노트',
     emphasis: '배경과 선행 사례를 분리해서 읽히게 정리',
     structure: '문제 제기-배경-사례-해석 순서로 구성',
@@ -652,10 +670,11 @@ const DOC_RECOMMENDATION_PROFILES = [
     textDensity: 'dense',
     writingNote: '선행 사례와 최신 사례를 분리하고, 각 사례에서 무엇을 배울지 짧게 정리',
     toneNote: '리서처가 정리한 노트처럼 깔끔하고 절제된 톤 유지',
+    audiences: ['리서치팀', '교수 / 심사자', '정책 담당자'],
   },
   {
     id: 'comparative-analysis',
-    label: 'Comparative Analysis',
+    label: '비교 분석 문서',
     frame: '비교 분석 문서',
     emphasis: '기준별 비교가 한눈에 보이게 재배치',
     structure: '비교 기준-옵션별 분석-차이점-선택 포인트 순서로 구성',
@@ -663,10 +682,11 @@ const DOC_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '비교 기준을 먼저 제시하고, 옵션별 장단점과 선택 포인트를 분리해서 정리',
     toneNote: '의사결정용 비교 문서처럼 명료한 톤 유지',
+    audiences: ['의사결정자', '투자 검토자', '전략팀'],
   },
   {
     id: 'class-report',
-    label: 'Class Report',
+    label: '과제형 보고서',
     frame: '과제형 보고서',
     emphasis: '배경 설명과 본론을 분리해 읽기 쉽게 정리',
     structure: '문제 제기-배경-핵심 분석-결론 순서로 구성',
@@ -674,13 +694,14 @@ const DOC_RECOMMENDATION_PROFILES = [
     textDensity: 'dense',
     writingNote: '교수나 심사자가 읽기 쉽게 배경, 본론, 결론을 명확히 나누고 참고자료 방향도 함께 제시',
     toneNote: '학술 과제 제출용으로 차분하고 논리적인 톤 유지',
+    audiences: ['교수 / 심사자', '학부 세미나 청중', '발표 평가자'],
   },
 ];
 
 const PPT_RECOMMENDATION_PROFILES = [
   {
     id: 'investor-deck',
-    label: 'Investor Deck',
+    label: '투자 제안 덱',
     frame: '설득형 발표자료',
     emphasis: '배경보다 투자 판단 포인트가 먼저 보이게 구성',
     structure: '왜 지금-핵심 판단-근거-다음 단계 순서로 구성',
@@ -688,10 +709,11 @@ const PPT_RECOMMENDATION_PROFILES = [
     textDensity: 'light',
     writingNote: '첫 장과 마지막 장에서 투자 판단 메시지가 명확히 보이게 정리',
     toneNote: '짧고 강한 설득형 발표 톤 유지',
+    audiences: ['투자자', '의사결정자', '사업 파트너'],
   },
   {
     id: 'executive-briefing',
-    label: 'Executive Briefing',
+    label: '경영진 브리핑',
     frame: '브리핑 슬라이드',
     emphasis: '핵심 판단과 시사점이 바로 보이도록 요약',
     structure: '상황-핵심 인사이트-리스크-권고안 순서로 구성',
@@ -699,10 +721,11 @@ const PPT_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '장표마다 headline이 먼저 보이게 만들고, supporting bullet은 2~3개로 제한',
     toneNote: '사내 경영진 보고용으로 짧고 명료한 톤 유지',
+    audiences: ['경영진', '임원진', '실무 리더'],
   },
   {
     id: 'research-presentation',
-    label: 'Research Presentation',
+    label: '연구 발표 자료',
     frame: '세미나 deck',
     emphasis: '질문과 근거가 분리되게 장표 흐름을 정리',
     structure: '질문-배경-근거-해석-결론 순서로 구성',
@@ -710,10 +733,11 @@ const PPT_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '연구 발표처럼 연구 질문, 핵심 발견, 해석이 각 장표에서 분명히 나뉘게 구성',
     toneNote: '학술 발표용으로 차분하고 설명적인 톤 유지',
+    audiences: ['세미나 청중', '교수 / 심사자', '연구실 구성원'],
   },
   {
     id: 'story-deck',
-    label: 'Story Deck',
+    label: '스토리 덱',
     frame: '요약 발표자료',
     emphasis: '장면 전환이 자연스럽게 이어지도록 재배열',
     structure: '오프닝-핵심 장면-전환점-마무리 순서로 구성',
@@ -721,10 +745,11 @@ const PPT_RECOMMENDATION_PROFILES = [
     textDensity: 'light',
     writingNote: '슬라이드 간 연결감이 보이도록 전환 문장과 장면 중심으로 정리',
     toneNote: '스토리텔링 발표처럼 유연한 톤 유지',
+    audiences: ['일반 청중', '컨퍼런스 청중', '수업 발표 청중'],
   },
   {
     id: 'roadmap-deck',
-    label: 'Roadmap Deck',
+    label: '로드맵 덱',
     frame: '제안 발표자료',
     emphasis: '실행 단계와 우선순위가 먼저 보이게 정리',
     structure: '현황-목표-실행 단계-우선순위-다음 액션 순서로 구성',
@@ -732,10 +757,11 @@ const PPT_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '실행 로드맵과 우선순위가 장표 흐름에서 자연스럽게 읽히게 정리',
     toneNote: '제안 발표처럼 실행 중심의 톤 유지',
+    audiences: ['프로젝트 팀', '실행 조직', '경영진'],
   },
   {
     id: 'evidence-deck',
-    label: 'Evidence Deck',
+    label: '근거 발표 자료',
     frame: '근거 중심 발표자료',
     emphasis: '주장과 데이터 근거가 분리되어 보이게 정리',
     structure: '핵심 주장-데이터-사례-결론 순서로 구성',
@@ -743,7 +769,26 @@ const PPT_RECOMMENDATION_PROFILES = [
     textDensity: 'balanced',
     writingNote: '핵심 주장 장표와 근거 장표를 구분하고, 필요한 곳만 출처를 붙일 수 있게 구성',
     toneNote: '근거 중심 브리핑처럼 신뢰감 있는 톤 유지',
+    audiences: ['투자자 / 경영진', '분석 리뷰 청중', '세미나 청중'],
   },
+];
+
+const DOC_RECOMMENDATION_ANGLE_LINES = [
+  '첫 문단에서 무엇을 판단해야 하는지부터 선명하게 보여주기',
+  '사례와 데이터는 같은 단락에 섞지 말고 역할을 분리하기',
+  '반론이나 한계가 있다면 마지막이 아니라 중간에 미리 노출하기',
+  '배경 설명이 길어지면 비교 기준 표나 짧은 bullet로 먼저 압축하기',
+  '실행 포인트와 참고 근거를 다른 블록으로 나눠 읽는 속도를 높이기',
+  '결론 장에서 다시 같은 말을 반복하지 말고 다음 판단 기준을 남기기',
+];
+
+const PPT_RECOMMENDATION_ANGLE_LINES = [
+  '첫 장 headline만 읽어도 발표 결론이 보이게 만들기',
+  '배경 장표와 근거 장표를 분리해서 메시지 충돌을 줄이기',
+  '로드맵이나 우선순위는 한 장에 몰아두지 말고 단계별로 끊어 보여주기',
+  '한 슬라이드에 주장과 사례를 다 넣기보다 둘 중 하나만 중심에 두기',
+  '숫자 장표는 해석 문장을 꼭 같이 두고 도표만 던지지 않기',
+  '마지막 장은 요약보다 다음 액션이 바로 보이게 정리하기',
 ];
 
 const RECOMMENDATION_SUPPORT_LINES = [
@@ -766,34 +811,47 @@ const RECOMMENDATION_EVIDENCE_LINES = [
 
 const buildPromptRecommendations = (mode, brief = {}, refreshKey = 0) => {
   const domainEntry = getDomainEntry(brief.domain);
+  const fullOverview = cleanText(brief.overview);
   const topic = normalizeRecommendationTopic(brief.overview, domainEntry.label);
-  const userRole = cleanText(brief.userRole);
+  if (!topic) return [];
+
+  const userRole = buildDisplayLabel(brief.userRole, 18);
   const audience = cleanText(brief.audience) || (mode === 'docs' ? '독자' : '청중');
   const languageId = brief.language === 'en' ? 'en' : 'ko';
   const languageLabel = getLanguageEntry(languageId).label;
-  const rolePhrase = userRole ? `${userRole} 기준` : `${audience} 기준`;
   const seed = hashString(`${mode}:${topic}:${brief.domain}:${userRole}:${audience}:${brief.language}:${refreshKey}`);
   const random = createSeededRandom(seed);
   const profiles = shuffleWithSeed(mode === 'docs' ? DOC_RECOMMENDATION_PROFILES : PPT_RECOMMENDATION_PROFILES, random);
+  const angleLines = shuffleWithSeed(mode === 'docs' ? DOC_RECOMMENDATION_ANGLE_LINES : PPT_RECOMMENDATION_ANGLE_LINES, random);
   const supportLines = shuffleWithSeed(RECOMMENDATION_SUPPORT_LINES, random);
   const evidenceLines = shuffleWithSeed(RECOMMENDATION_EVIDENCE_LINES, random);
+  const defaultAudience = mode === 'docs' ? DEFAULT_DOC_BRIEF.audience : DEFAULT_PPT_BRIEF.audience;
+  const hasCustomAudience = cleanText(brief.audience) && cleanText(brief.audience) !== defaultAudience;
 
-  return profiles.slice(0, 6).map((profile, index) => {
+  return profiles.slice(0, RECOMMENDATION_CARD_LIMIT).map((profile, index) => {
+    const candidateAudiences = Array.isArray(profile.audiences) ? shuffleWithSeed(profile.audiences, random) : [];
+    const recommendedAudience = hasCustomAudience
+      ? cleanText(brief.audience)
+      : candidateAudiences[0] || audience;
+    const angleLine = angleLines[index % angleLines.length];
     const supportLine = supportLines[index % supportLines.length];
     const evidenceLine = evidenceLines[index % evidenceLines.length];
+    const writerLine = userRole ? `${userRole}가 작성해도 과하게 전문용어로 흐르지 않게 문장 강도를 조절하기.` : '';
 
     return {
       title: `${topic} · ${profile.label}`,
-      description: `${rolePhrase} ${profile.frame}로 만들고, ${profile.emphasis}. ${profile.structure}. ${supportLine}. ${evidenceLine}.`,
-      overview: topic,
-      audience,
+      description: `${recommendedAudience}에게 설명하는 ${profile.frame} 방향입니다. ${profile.emphasis}. ${profile.structure}. ${angleLine}. ${supportLine}. ${evidenceLine}${writerLine ? ` ${writerLine}` : ''}`,
+      overview: fullOverview,
+      audience: recommendedAudience,
       theme: profile.theme,
       textDensity: profile.textDensity,
       domainId: domainEntry.id,
       domainLabel: domainEntry.label,
+      frame: profile.frame,
+      authorRole: userRole,
       language: languageLabel,
       languageId,
-      writingNote: `${profile.writingNote}. ${supportLine}. ${evidenceLine}.`,
+      writingNote: `${profile.writingNote}. ${angleLine}. ${supportLine}. ${evidenceLine}${writerLine ? ` ${writerLine}` : ''}`,
       toneNote: `${profile.toneNote}. 최종 결과물은 ${languageLabel} 기준으로 정리.`,
       recommendationId: `${mode}-${profile.id}-${refreshKey}`,
     };
@@ -1289,6 +1347,12 @@ export default function QuestionPanel({ onOpenDashboard }) {
   };
 
   const handleRefreshPromptRecommendations = (mode) => {
+    const brief = mode === 'docs' ? docsBrief : pptBrief;
+    if (cleanText(brief.overview).length < MIN_RECOMMENDATION_OVERVIEW_LENGTH) {
+      setPanelMessage('주제 개요를 6자 이상 입력하면 추천 프롬프트를 만들 수 있습니다.');
+      return;
+    }
+
     setPromptRefreshKey((state) => ({ ...state, [mode]: state[mode] + 1 }));
     setPanelMessage(mode === 'docs' ? '문서 추천 프롬프트를 새로 갱신했습니다.' : 'PPT 추천 프롬프트를 새로 갱신했습니다.');
   };
@@ -1350,7 +1414,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const handleSelectExample = (mode, example = {}, domainId = 'other') => {
     const currentBrief = mode === 'docs' ? docsBrief : pptBrief;
     updateBrief(mode, {
-      overview: example.overview || normalizeRecommendationTopic(currentBrief.overview, getDomainEntry(domainId).label),
+      overview: example.overview || cleanText(currentBrief.overview),
       audience: example.audience || (mode === 'docs' ? DEFAULT_DOC_BRIEF.audience : DEFAULT_PPT_BRIEF.audience),
       theme: example.theme || (mode === 'docs' ? DEFAULT_DOC_BRIEF.theme : DEFAULT_PPT_BRIEF.theme),
       textDensity: example.textDensity || 'balanced',
@@ -2056,17 +2120,27 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
             <div style={advancedSectionStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
-                <div style={advancedSectionLabelStyle}>PROMPT EXAMPLES</div>
-                <button type="button" onClick={() => handleRefreshPromptRecommendations(mode)} style={{ ...buildAdvancedActionButtonStyle(false, false), width: 'auto', padding: '8px 10px' }}>
+                <div style={advancedSectionLabelStyle}>추천 예시</div>
+                <button type="button" onClick={() => handleRefreshPromptRecommendations(mode)} disabled={promptRecommendations.length === 0} style={{ ...buildAdvancedActionButtonStyle(false, promptRecommendations.length === 0), width: 'auto', padding: '8px 10px' }}>
                   새 추천 받기
                 </button>
               </div>
               <div style={{ display: 'grid', gap: '8px' }}>
-                {promptRecommendations.map((example, index) => (
-                  <button key={`${example.title}-${index}`} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(191, 219, 254, 0.9)', background: '#ffffff', cursor: 'pointer' }}>
+                {promptRecommendations.length === 0 ? (
+                  <div style={{ padding: '12px', borderRadius: '12px', background: '#f8fafc', border: '1px solid rgba(226, 232, 240, 0.9)', color: '#64748b', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', lineHeight: 1.45 }}>
+                    주제 개요를 6자 이상 입력하면 현재 개요를 바탕으로 추천 예시를 생성합니다.
+                  </div>
+                ) : promptRecommendations.map((example) => (
+                  <button key={example.recommendationId} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(191, 219, 254, 0.9)', background: '#ffffff', cursor: 'pointer' }}>
                     <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#0f172a', marginBottom: '4px' }}>{example.title}</div>
                     <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#475569', lineHeight: 1.45, marginBottom: '8px' }}>{example.description}</div>
-                    <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>{example.domainLabel} · {example.audience} · {example.language}</div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>도메인 · {example.domainLabel}</div>
+                      {example.authorRole ? <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>작성자 · {example.authorRole}</div> : null}
+                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>대상 · {example.audience}</div>
+                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>형식 · {example.frame}</div>
+                      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: '#64748b' }}>언어 · {example.language}</div>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -2129,6 +2203,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
     const hasDebateContext = Boolean(debateSeedDossier || consensus || messages.length > 0);
     const stage = builderStage[mode] || 'overview';
     const citationPaperPool = paperPools[mode] || [];
+    const hasPromptRecommendations = promptRecommendations.length > 0;
 
     if (stage === 'advanced') {
       return renderAdvancedBuilder(mode);
@@ -2193,19 +2268,19 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
           <div style={{ border: '1px solid rgba(148, 163, 184, 0.14)', borderRadius: '14px', padding: '14px', background: 'rgba(2, 6, 23, 0.4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#c4f1ff', letterSpacing: '0.14em' }}>PROMPT RECOMMENDATIONS</div>
+              <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#c4f1ff', letterSpacing: '0.14em' }}>추천 프롬프트</div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)' }}>
-                  개요를 기준으로 갱신할 때마다 새롭게 바뀌는 추천 프롬프트입니다.
+                  {hasPromptRecommendations ? '현재 개요를 바탕으로 방향이 다른 추천 구성을 다시 뽑을 수 있습니다.' : '주제 개요를 6자 이상 입력하면 추천 구성을 생성합니다.'}
                 </div>
-                <button type="button" onClick={() => handleRefreshPromptRecommendations(mode)} style={{ ...secondaryButtonStyle(false), width: 'auto', padding: '8px 10px' }}>
+                <button type="button" onClick={() => handleRefreshPromptRecommendations(mode)} disabled={!hasPromptRecommendations} style={{ ...secondaryButtonStyle(!hasPromptRecommendations), width: 'auto', padding: '8px 10px' }}>
                   새 추천 받기
                 </button>
               </div>
             </div>
             <div style={{ display: 'grid', gap: '10px' }}>
-              {promptRecommendations.map((example, index) => (
-                <button key={`${example.title}-${index}`} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.66)', cursor: 'pointer' }}>
+              {hasPromptRecommendations ? promptRecommendations.map((example) => (
+                <button key={example.recommendationId} type="button" onClick={() => handleSelectExample(mode, example, example.domainId)} style={{ textAlign: 'left', padding: '12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.66)', cursor: 'pointer' }}>
                   <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginBottom: '6px' }}>
                     {example.title}
                   </div>
@@ -2213,19 +2288,24 @@ export default function QuestionPanel({ onOpenDashboard }) {
                     {example.description}
                   </div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.1em' }}>DOMAIN · {example.domainLabel}</div>
-                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#86efac', letterSpacing: '0.1em' }}>AUDIENCE · {example.audience}</div>
-                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#fcd34d', letterSpacing: '0.1em' }}>THEME · {getThemeEntry(example.theme).label}</div>
-                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#c4b5fd', letterSpacing: '0.1em' }}>LANGUAGE · {example.language}</div>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.1em' }}>도메인 · {example.domainLabel}</div>
+                    {example.authorRole ? <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#fda4af', letterSpacing: '0.1em' }}>작성자 · {example.authorRole}</div> : null}
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#86efac', letterSpacing: '0.1em' }}>대상 · {example.audience}</div>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#fcd34d', letterSpacing: '0.1em' }}>형식 · {example.frame}</div>
+                    <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#c4b5fd', letterSpacing: '0.1em' }}>언어 · {example.language}</div>
                   </div>
                 </button>
-              ))}
+              )) : (
+                <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.5)', fontFamily: 'Rajdhani, sans-serif', fontSize: '13px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.45 }}>
+                  개요를 조금 더 구체적으로 적으면, 지금 입력한 주제를 바탕으로 실제로 다른 방향의 추천 카드가 생성됩니다.
+                </div>
+              )}
             </div>
           </div>
 
           <div style={{ padding: '14px', borderRadius: '14px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(8, 47, 73, 0.18)' }}>
             <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#bff8ff', letterSpacing: '0.14em', marginBottom: '8px' }}>
-              NEXT STEP · AI DRAFT
+              다음 단계 · AI 초안
             </div>
             <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.72)', lineHeight: 1.5 }}>
               다음 단계로 넘어가면 AI가 사진처럼 실제 편집 가능한 목차 초안, 내용 bullet, 이미지 카드 위치를 먼저 구성합니다. 그 다음에 사용자가 수정하는 흐름으로 진행됩니다.
