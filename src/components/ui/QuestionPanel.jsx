@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDiscussionStore } from '../../store/discussionStore';
+import { useStudioStore } from '../../store/studioStore';
 import { useWorkbenchStore } from '../../store/workbenchStore';
+import StudioWorkflow from './studio/StudioWorkflow';
 import {
   downloadBlobResult,
   exportWorkbenchArtifact,
@@ -13,6 +15,7 @@ import {
 } from '../../services/workbenchService';
 import { searchWeb } from '../../services/searchService';
 import { extractVideoId, fetchTranscript, isYoutubeUrl } from '../../services/youtubeService';
+import { getStudioPanelWidth } from './studio/studioConfig';
 
 const MODE_CARDS = [
   {
@@ -309,6 +312,26 @@ const DEFAULT_PPT_BRIEF = {
 
 const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
 const cleanFreeformText = (value = '') => String(value || '').replace(/\r/g, '').trim();
+const normalizeStructuredText = (value = '') => String(value || '')
+  .replace(/\r/g, '')
+  .split('\n')
+  .map((line) => cleanText(line))
+  .join('\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+const extractOverviewHeadline = (value = '') => {
+  const firstLine = normalizeStructuredText(value)
+    .split('\n')
+    .map((line) => cleanText(line))
+    .find(Boolean) || '';
+  return firstLine.length > 120 ? `${firstLine.slice(0, 120).trim()}…` : firstLine;
+};
+const formatSectionNoteForInstruction = (value = '') => normalizeStructuredText(value)
+  .split('\n')
+  .map((line) => cleanText(String(line || '').replace(/^[-*•]\s*/, '')))
+  .filter(Boolean)
+  .slice(0, 3)
+  .join(' / ');
 
 const getDomainEntry = (domainId = 'other') => DOMAIN_LIBRARY.find((item) => item.id === domainId) || DOMAIN_LIBRARY[DOMAIN_LIBRARY.length - 1];
 const getThemeEntry = (themeId = 'business') => THEME_OPTIONS.find((item) => item.id === themeId) || THEME_OPTIONS[0];
@@ -349,7 +372,7 @@ const ensureOutlineCount = (items = [], targetCount = 6, { modeKey = 'docs', dom
 const buildOutlinePreview = (mode, brief = {}) => {
   const modeKey = mode === 'ppt' ? 'ppt' : 'docs';
   const templateSet = OUTLINE_PRESETS[modeKey] || OUTLINE_PRESETS.docs;
-  const overview = cleanText(brief.overview);
+  const overview = extractOverviewHeadline(brief.overview);
   const domainLabel = getDomainEntry(brief.domain).label;
   const targetCount = getCardCount(brief.cardCount, modeKey === 'ppt' ? DEFAULT_PPT_BRIEF.cardCount : DEFAULT_DOC_BRIEF.cardCount);
   const explicitOutline = ensureOutlineCount((Array.isArray(brief.outlineTitles) ? brief.outlineTitles : []).map((item) => cleanText(item)).filter(Boolean), targetCount, { modeKey, domainLabel });
@@ -551,10 +574,11 @@ const buildSectionPlanInstructionLines = (sectionPlans = [], { mode = 'docs' } =
     const title = cleanText(plan?.title || '') || plan?.fallbackTitle || `${blockLabel} ${index + 1}`;
     const citationOption = getSectionCitationOptionEntry(plan?.citationMode);
     const citationTitles = normalizeSectionCitations(plan?.citations).map((item) => item.title).slice(0, 3);
+    const contentSummary = formatSectionNoteForInstruction(plan?.contentNote || '');
 
     return [
       `${blockLabel} ${index + 1}: ${title}`,
-      cleanText(plan?.contentNote || '') ? `들어갈 내용: ${cleanText(plan.contentNote)}` : '',
+      contentSummary ? `들어갈 내용: ${contentSummary}` : '',
       `인용 사용: ${citationOption.label}`,
       cleanText(plan?.citationQuery || '') ? `찾을 논문/자료 방향: ${cleanText(plan.citationQuery)}` : '',
       citationTitles.length > 0 ? `우선 인용 후보: ${citationTitles.join(' ; ')}` : '',
@@ -610,7 +634,7 @@ const buildDisplayLabel = (value = '', maxLength = 20) => {
 };
 
 const normalizeRecommendationTopic = (overview = '', domainLabel = '일반') => {
-  const normalized = cleanText(overview);
+  const normalized = extractOverviewHeadline(overview);
   if (normalized.length < MIN_RECOMMENDATION_OVERVIEW_LENGTH) return '';
 
   const stripped = normalized
@@ -811,7 +835,7 @@ const RECOMMENDATION_EVIDENCE_LINES = [
 
 const buildPromptRecommendations = (mode, brief = {}, refreshKey = 0) => {
   const domainEntry = getDomainEntry(brief.domain);
-  const fullOverview = cleanText(brief.overview);
+  const fullOverview = normalizeStructuredText(brief.overview);
   const topic = normalizeRecommendationTopic(brief.overview, domainEntry.label);
   if (!topic) return [];
 
@@ -879,7 +903,7 @@ const buildGenerationInstructions = ({ mode, brief, outlineTitles = [], sectionP
   const targetCount = getCardCount(brief.cardCount, mode === 'ppt' ? DEFAULT_PPT_BRIEF.cardCount : DEFAULT_DOC_BRIEF.cardCount);
 
   return [
-    cleanText(brief.overview),
+    normalizeStructuredText(brief.overview) ? `주제 개요 원문:\n${normalizeStructuredText(brief.overview)}` : '',
     `형식: ${modeLabel}`,
     `도메인: ${domainEntry.label}`,
     cleanText(brief.userRole) ? `작성자 직업/역할: ${cleanText(brief.userRole)}` : '',
@@ -1144,6 +1168,12 @@ export default function QuestionPanel({ onOpenDashboard }) {
     applyGeneratedOutput,
     clearGeneratedOutput,
   } = useWorkbenchStore();
+  const studioSessions = useStudioStore((state) => state.sessions);
+  const studioStep = activeMode === 'docs'
+    ? (studioSessions.docs?.step || 'method')
+    : activeMode === 'ppt'
+      ? (studioSessions.ppt?.step || 'method')
+      : 'method';
 
   const docsOutlinePreview = useMemo(() => buildOutlinePreview('docs', docsBrief), [docsBrief]);
   const pptOutlinePreview = useMemo(() => buildOutlinePreview('ppt', pptBrief), [pptBrief]);
@@ -1157,9 +1187,9 @@ export default function QuestionPanel({ onOpenDashboard }) {
   const progressWidth = Math.min(100, Math.max(0, (currentRound / displayTotalRounds) * 100));
   const effectiveTopic = cleanText(
     activeMode === 'docs'
-      ? docsBrief.overview
+      ? extractOverviewHeadline(docsBrief.overview)
       : activeMode === 'ppt'
-        ? pptBrief.overview
+        ? extractOverviewHeadline(pptBrief.overview)
         : debateTopic || dossier?.topic || '',
   );
 
@@ -1258,28 +1288,6 @@ export default function QuestionPanel({ onOpenDashboard }) {
   }, [builderStage.ppt, pptBrief.overview, pptBrief.domain]);
 
   useEffect(() => {
-    if (activeMode === 'docs') {
-      setPreview({
-        mode: 'docs',
-        title: cleanText(docsBrief.overview) || '문서 스튜디오',
-        subtitle: buildModeSubtitle('docs', docsBrief),
-        outline: docsOutlinePreview,
-        theme: docsBrief.theme,
-      });
-      return;
-    }
-
-    if (activeMode === 'ppt') {
-      setPreview({
-        mode: 'ppt',
-        title: cleanText(pptBrief.overview) || 'PPT 스튜디오',
-        subtitle: buildModeSubtitle('ppt', pptBrief),
-        outline: pptOutlinePreview,
-        theme: pptBrief.theme,
-      });
-      return;
-    }
-
     if (activeMode === 'debate') {
       setPreview({
         mode: 'debate',
@@ -1298,7 +1306,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
       outline: ['문서 만들기', 'PPT 만들기', '토론 실험실'],
       theme: 'business',
     });
-  }, [activeMode, debateInput, docsBrief, docsOutlinePreview, focusInput, pptBrief, pptOutlinePreview, setPreview]);
+  }, [activeMode, debateInput, focusInput, setPreview]);
 
   const updateBrief = (mode, updates = {}) => {
     if (mode === 'docs') {
@@ -1372,7 +1380,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
       const data = await generateOutlineDraft({
         mode,
         brief: {
-          overview: cleanText(brief.overview),
+          overview: normalizeStructuredText(brief.overview),
           userRole: cleanText(brief.userRole),
           audience: cleanText(brief.audience),
           domain: brief.domain,
@@ -1616,7 +1624,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
 
       const data = await generateWorkbenchArtifacts({
         mode,
-        topic: cleanText(brief.overview),
+        topic: extractOverviewHeadline(brief.overview),
         instructions,
         audience: cleanText(brief.audience),
         dossier: useDebateContext ? debateSeedDossier : null,
@@ -1624,7 +1632,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
         messages: useDebateContext ? messages : [],
         artifacts,
         brief: {
-          overview: cleanText(brief.overview),
+          overview: normalizeStructuredText(brief.overview),
           userRole: cleanText(brief.userRole),
           domain: brief.domain,
           domainLabel: getDomainEntry(brief.domain).label,
@@ -1654,14 +1662,14 @@ export default function QuestionPanel({ onOpenDashboard }) {
       });
 
       applyGeneratedOutput({
-        topic: data?.topic || cleanText(brief.overview),
+        topic: data?.topic || extractOverviewHeadline(brief.overview),
         dossier: data?.dossier,
         artifacts: data?.artifacts,
         source: 'brief',
         mode,
         preview: {
           mode,
-          title: cleanText(brief.overview),
+          title: extractOverviewHeadline(brief.overview),
           subtitle: buildModeSubtitle(mode, brief),
           outline: outlineTitles,
           theme: brief.theme,
@@ -1819,13 +1827,13 @@ export default function QuestionPanel({ onOpenDashboard }) {
           </div>
         </div>
         <div style={{ display: 'grid', gap: '10px' }}>
-          {cleanText(brief.overview) && (
+          {extractOverviewHeadline(brief.overview) && (
             <div style={{ padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.16)', background: 'rgba(15, 23, 42, 0.74)' }}>
               <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: '8px', color: '#7dd3fc', letterSpacing: '0.12em', marginBottom: '6px' }}>
                 {isDeck ? 'PRESENTATION TITLE' : 'DOCUMENT TITLE'}
               </div>
               <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '16px', fontWeight: 700, color: '#f8fafc', lineHeight: 1.35 }}>
-                {cleanText(brief.overview)}
+                {extractOverviewHeadline(brief.overview)}
               </div>
             </div>
           )}
@@ -2243,6 +2251,9 @@ export default function QuestionPanel({ onOpenDashboard }) {
                 style={{ ...inputStyle, resize: 'vertical' }}
               />
             </label>
+            <div style={{ marginTop: '-4px', fontFamily: 'Rajdhani, sans-serif', fontSize: '12px', color: 'rgba(226, 232, 240, 0.68)', lineHeight: 1.45 }}>
+              줄바꿈으로 부 제목, 설명 bullet, [image] 요소를 적으면 AI가 그 구조를 outline seed로 읽고 초안을 잡습니다.
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
               <label>
@@ -2353,8 +2364,8 @@ export default function QuestionPanel({ onOpenDashboard }) {
           <div style={{ display: 'grid', gap: '12px' }}>
             <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(125, 211, 252, 0.14)', background: 'rgba(15, 23, 42, 0.56)' }}>
               <div style={{ ...fieldLabelStyle, marginBottom: '8px' }}>주제 개요</div>
-              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', color: '#f8fafc', lineHeight: 1.45 }}>
-                {cleanText(brief.overview) || '개요 없음'}
+              <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '14px', color: '#f8fafc', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
+                {normalizeStructuredText(brief.overview) || '개요 없음'}
               </div>
             </div>
 
@@ -2749,20 +2760,18 @@ export default function QuestionPanel({ onOpenDashboard }) {
       position: 'absolute',
       top: '20px',
       left: '20px',
-      zIndex: isBuilderAdvancedStage ? 160 : 100,
-      background: isBuilderAdvancedStage
-        ? 'linear-gradient(180deg, rgba(239, 246, 255, 0.98) 0%, rgba(224, 242, 254, 0.95) 100%)'
-        : 'linear-gradient(180deg, rgba(2, 6, 23, 0.94) 0%, rgba(10, 18, 34, 0.9) 100%)',
+      zIndex: 100,
+      background: 'linear-gradient(180deg, rgba(2, 6, 23, 0.94) 0%, rgba(10, 18, 34, 0.9) 100%)',
       backdropFilter: 'blur(16px)',
       padding: '18px',
       borderRadius: '18px',
-      border: isBuilderAdvancedStage ? '1px solid rgba(191, 219, 254, 0.9)' : '1px solid rgba(125, 211, 252, 0.16)',
-      width: activeMode === 'home' ? '380px' : activeMode === 'debate' ? '430px' : isBuilderAdvancedStage ? 'calc(100vw - 40px)' : isBuilderOverviewStage ? '480px' : isBuilderDetailsStage ? 'min(1080px, calc(100vw - 40px))' : 'min(620px, calc(100vw - 40px))',
+      border: '1px solid rgba(125, 211, 252, 0.16)',
+      width: getStudioPanelWidth({ activeMode, step: studioStep }),
       maxHeight: '92vh',
       overflowY: 'auto',
       transition: 'width 0.25s ease, border-color 0.3s ease',
       boxSizing: 'border-box',
-      color: isBuilderAdvancedStage ? '#0f172a' : 'inherit',
+      color: 'inherit',
     }}>
       <div style={{ marginBottom: '14px' }}>
         <div style={{ color: isBuilderAdvancedStage ? '#1d4ed8' : '#c4f1ff', fontSize: '16px', marginBottom: '6px', fontFamily: 'Orbitron, monospace', letterSpacing: '0.14em' }}>
@@ -2773,7 +2782,7 @@ export default function QuestionPanel({ onOpenDashboard }) {
         </div>
       </div>
 
-      {activeMode === 'home' ? renderHome() : activeMode === 'debate' ? renderDebateLab() : renderBuilder(activeMode)}
+      {activeMode === 'debate' ? renderDebateLab() : <StudioWorkflow onSelectDebate={() => handleModeSelect('debate')} />}
 
       <button type="button" onClick={onOpenDashboard} style={{ width: '100%', padding: '10px', marginTop: '12px', background: 'linear-gradient(135deg, rgba(8, 145, 178, 0.24) 0%, rgba(37, 99, 235, 0.22) 100%)', border: '1px solid rgba(125, 211, 252, 0.2)', borderRadius: '8px', color: '#bff8ff', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>
         운영 대시보드 열기

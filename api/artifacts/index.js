@@ -39,5 +39,10 @@ export default async function handler(req, res) {
     return await outlineHandler(req, res)
   }
 
+  if (route === 'ingest') {
+    const { default: ingestHandler } = await import('./_ingest.js')
+    return await ingestHandler(req, res)
+  }
+
   return sendJson(res, 404, { error: '지원하지 않는 artifacts route 입니다.' })
 }

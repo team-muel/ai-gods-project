@@ -3,8 +3,21 @@ import { clampInteger, enforceRateLimit, ensureRequestAllowed, parseJsonBody, se
 
 const cleanText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim()
 
+const cleanMultilineText = (value = '') => String(value || '')
+  .replace(/\r/g, '')
+  .split('\n')
+  .map((line) => cleanText(line))
+  .join('\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
+const extractOverviewHeadline = (value = '') => cleanMultilineText(value)
+  .split('\n')
+  .map((line) => cleanText(line))
+  .find(Boolean) || ''
+
 const normalizeBrief = (brief = {}) => ({
-  overview: cleanText(brief?.overview || '').slice(0, 600),
+  overview: cleanMultilineText(brief?.overview || '').slice(0, 1200),
   userRole: cleanText(brief?.userRole || '').slice(0, 120),
   audience: cleanText(brief?.audience || '').slice(0, 120),
   domain: cleanText(brief?.domain || '').slice(0, 60),
@@ -13,10 +26,88 @@ const normalizeBrief = (brief = {}) => ({
   textDensity: cleanText(brief?.textDensity || '').slice(0, 24),
   aiImageMode: cleanText(brief?.aiImageMode || '').slice(0, 24),
   language: cleanText(brief?.language || '').slice(0, 24),
-  cardCount: clampInteger(brief?.cardCount, 4, 10, 6),
+  cardCount: clampInteger(brief?.cardCount, 4, 15, 6),
   writingNote: cleanText(brief?.writingNote || '').slice(0, 240),
   toneNote: cleanText(brief?.toneNote || '').slice(0, 240),
 })
+
+const splitOverviewParagraphs = (overview = '') => cleanMultilineText(overview)
+  .split(/\n{2,}/)
+  .map((chunk) => chunk.split('\n').map((line) => cleanText(line)).filter(Boolean))
+  .filter((lines) => lines.length > 0)
+
+const buildSeedCitationQuery = ({ headline = '', title = '' } = {}) => {
+  const compactHeadline = cleanText(headline)
+  const compactTitle = cleanText(title).replace(/^\[image\]\s*/i, '')
+  return cleanText([compactHeadline, compactTitle, '관련 논문 자료'].join(' ')).slice(0, 180)
+}
+
+const ensureImageSeedItem = ({ items = [], brief = {}, mode = 'docs' } = {}) => {
+  if (brief.aiImageMode === 'off') return items
+  if ((Array.isArray(items) ? items : []).some((item) => /^\[image\]/i.test(cleanText(item?.title || '')))) return items
+  if ((Array.isArray(items) ? items : []).length < 4) return items
+
+  const imageItem = {
+    title: `[image] ${mode === 'ppt' ? '핵심 장면 또는 분위기 이미지' : '핵심 장면을 보여주는 이미지'}`,
+    bullets: [],
+    citationMode: 'off',
+    citationQuery: '',
+  }
+
+  const nextItems = [...items]
+  nextItems.splice(Math.min(4, nextItems.length), 0, imageItem)
+  return nextItems
+}
+
+const buildSeedOutlineItems = ({ mode = 'docs', brief = {} } = {}) => {
+  const paragraphs = splitOverviewParagraphs(brief.overview)
+  if (paragraphs.length < 3) return []
+
+  const structuralSignals = paragraphs.reduce((count, lines) => {
+    const title = cleanText(lines[0] || '')
+    return count + (
+      lines.length > 1
+      || /^\[image\]/i.test(title)
+      || /^\d+\s*부\b/.test(title)
+      || /^(part|section|chapter)\s*\d+/i.test(title)
+        ? 1
+        : 0
+    )
+  }, 0)
+
+  if (structuralSignals < 2) return []
+
+  const headline = extractOverviewHeadline(brief.overview)
+  const items = paragraphs
+    .map((lines, index) => {
+      let title = cleanText(lines[0] || '')
+      if (!title) return null
+
+      const isImage = /^\[image\]/i.test(title)
+      const isFirstCover = index === 0 && lines.length === 1 && !/^\d+\s*부\b/.test(title) && !/^(part|section|chapter)\s*\d+/i.test(title)
+      title = isImage ? `[image] ${title.replace(/^\[image\]\s*/i, '')}` : title
+
+      return {
+        title: title.slice(0, 160),
+        bullets: (isFirstCover ? [] : lines.slice(1))
+          .map((line) => cleanText(String(line || '').replace(/^[-*•]\s*/, '')))
+          .filter(Boolean)
+          .slice(0, 3),
+        citationMode: normalizeCitationMode(
+          '',
+          isImage || isFirstCover
+            ? 'off'
+            : /참고|reference|sources|bibliography|출처/i.test(title)
+              ? 'required'
+              : 'optional'
+        ),
+        citationQuery: isImage || isFirstCover ? '' : buildSeedCitationQuery({ headline, title }),
+      }
+    })
+    .filter(Boolean)
+
+  return ensureImageSeedItem({ items, brief, mode }).slice(0, 15)
+}
 
 const OUTLINE_TEMPLATES = {
   docs: {
@@ -61,7 +152,7 @@ const buildFallbackBullets = ({ mode = 'docs', title = '', topic = '', index = 0
 const buildFallbackItems = ({ mode = 'docs', brief = {} } = {}) => {
   const templateSet = OUTLINE_TEMPLATES[mode] || OUTLINE_TEMPLATES.docs
   const titles = (templateSet[brief.theme] || templateSet.business).slice(0, brief.cardCount)
-  const topic = brief.overview
+  const topic = extractOverviewHeadline(brief.overview) || brief.overview
   const items = titles.map((title, index) => ({
     title: index === 0 ? topic : title,
     bullets: buildFallbackBullets({ mode, title, topic, index }),
@@ -147,9 +238,18 @@ export default async function handler(req, res) {
 
   const mode = cleanText(body?.mode || '').toLowerCase() === 'ppt' ? 'ppt' : 'docs'
   const brief = normalizeBrief(body?.brief && typeof body.brief === 'object' ? body.brief : {})
+  const seedItems = buildSeedOutlineItems({ mode, brief })
 
   if (!brief.overview) {
     return sendJson(res, 400, { error: '주제 개요가 필요합니다.' })
+  }
+
+  if (seedItems.length >= 3) {
+    return sendJson(res, 200, {
+      ok: true,
+      source: 'seed',
+      items: seedItems,
+    })
   }
 
   const outputLabel = mode === 'ppt' ? '발표자료' : '문서'
@@ -172,8 +272,10 @@ export default async function handler(req, res) {
         `원하는 항목 수: ${brief.cardCount}`,
         brief.writingNote ? `추가 작성 메모: ${brief.writingNote}` : '',
         brief.toneNote ? `톤 메모: ${brief.toneNote}` : '',
+        seedItems.length > 0 ? `사용자 제공 주제 요소:\n${seedItems.map((item, index) => `${index + 1}. ${item.title}${item.bullets.length ? ` | ${item.bullets.join(' / ')}` : ''}`).join('\n')}` : '',
         '규칙:',
         '- 첫 항목은 표지/커버로 둡니다.',
+        '- 사용자가 줄바꿈으로 정리한 주제 요소나 부 제목이 있으면 가능한 한 그 구조와 순서를 유지합니다.',
         '- 각 항목은 사용자가 바로 수정 가능한 구체적인 제목으로 작성합니다.',
         '- 일반 항목은 bullets를 0~2개만 넣고 짧게 씁니다.',
         '- 이미지가 필요한 경우 title을 [image] 로 시작하는 독립 항목으로 넣습니다.',

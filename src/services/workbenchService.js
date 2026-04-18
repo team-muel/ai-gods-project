@@ -59,6 +59,14 @@ export const generateOutlineDraft = async ({ mode = 'docs', brief } = {}) => {
   })
 }
 
+export const ingestWorkbenchSources = async ({ promptLine = '', sourceUrl = '', uploadedSources = [] } = {}) => {
+  return await postJson('/api/artifacts/ingest', {
+    promptLine,
+    sourceUrl,
+    uploadedSources,
+  })
+}
+
 export const submitArtifactFeedback = async ({ debateId, topic, artifactType, direction, artifact, dossier, note = '' } = {}) => {
   return await postJson('/api/artifacts/feedback', {
     debateId,

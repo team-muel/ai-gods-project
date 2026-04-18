@@ -5,8 +5,16 @@ import { buildDebateDossier } from '../../src/lib/dossierBuilder.js'
 
 const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
 
+const cleanMultilineText = (value = '') => String(value || '')
+  .replace(/\r/g, '')
+  .split('\n')
+  .map((line) => cleanText(line))
+  .join('\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()
+
 const normalizeBrief = (brief = {}) => ({
-  overview: cleanText(brief?.overview || '').slice(0, 600),
+  overview: cleanMultilineText(brief?.overview || '').slice(0, 1200),
   userRole: cleanText(brief?.userRole || '').slice(0, 120),
   domain: cleanText(brief?.domain || '').slice(0, 40),
   domainLabel: cleanText(brief?.domainLabel || '').slice(0, 80),
@@ -16,7 +24,7 @@ const normalizeBrief = (brief = {}) => ({
   aiImageMode: cleanText(brief?.aiImageMode || '').slice(0, 24),
   imageSource: cleanText(brief?.imageSource || '').slice(0, 24),
   imageStylePreset: cleanText(brief?.imageStylePreset || '').slice(0, 40),
-  cardCount: clampInteger(brief?.cardCount, 4, 10, 6),
+  cardCount: clampInteger(brief?.cardCount, 4, 15, 6),
   layoutPreset: cleanText(brief?.layoutPreset || '').slice(0, 24),
   language: cleanText(brief?.language || '').slice(0, 24),
   writingNote: cleanText(brief?.writingNote || '').slice(0, 240),
@@ -436,7 +444,7 @@ export default async function handler(req, res) {
   const mode = cleanText(body?.mode || 'both').toLowerCase()
   const brief = normalizeBrief(body?.brief && typeof body.brief === 'object' ? body.brief : {})
   const topic = cleanText(body?.topic || brief.overview || '').slice(0, 200)
-  const instructions = cleanText(body?.instructions || '').slice(0, 1000)
+  const instructions = cleanMultilineText(body?.instructions || '').slice(0, 2200)
   const audience = cleanText(body?.audience || '').slice(0, 200)
   const reportCitationMode = normalizeCitationControl(body?.reportCitationMode)
   const reportCitationVisibility = normalizeCitationControl(body?.reportCitationVisibility)
