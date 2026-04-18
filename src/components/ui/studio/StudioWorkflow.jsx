@@ -94,10 +94,6 @@ export default function StudioWorkflow({ onSelectDebate }) {
   useEffect(() => {
     if (!['docs', 'ppt'].includes(activeMode)) return
     if (session.method !== 'oneLine') return
-    if (cleanText(session.brief.promptLine).length < 4) {
-      setRecommendations(activeMode, [])
-      return
-    }
 
     setRecommendations(activeMode, buildPromptRecommendations({
       mode: activeMode,
@@ -105,7 +101,7 @@ export default function StudioWorkflow({ onSelectDebate }) {
       language: session.brief.language,
       seed: session.recommendations.refreshSeed,
     }))
-  }, [activeMode, session.brief.language, session.brief.promptLine, session.method, session.recommendations.refreshSeed, setRecommendations])
+  }, [activeMode, session.brief.language, session.method, session.recommendations.refreshSeed, setRecommendations])
 
   const handleSelectMode = (nextMode) => {
     if (!['docs', 'ppt'].includes(nextMode)) return

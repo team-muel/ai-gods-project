@@ -328,9 +328,9 @@ export default function StudioMethodStep({
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <div>
                   <div style={sectionLabelStyle}>추천 프롬프트</div>
-                  <div style={helperTextStyle}>새로고침할 때마다 다른 방향의 한줄 프롬프트 6~8개를 제안합니다.</div>
+                  <div style={helperTextStyle}>처음에는 바로 쓸 수 있는 기본 제안을 보여주고, 입력 후 새로고침하면 그 주제 기준으로 다시 제안합니다.</div>
                 </div>
-                <button type="button" onClick={onRefreshRecommendations} disabled={cleanText(brief.promptLine).length < 4} style={{ ...secondaryButtonStyle(cleanText(brief.promptLine).length < 4), width: 'auto' }}>
+                <button type="button" onClick={onRefreshRecommendations} style={{ ...secondaryButtonStyle(false), width: 'auto' }}>
                   새로고침
                 </button>
               </div>
@@ -343,7 +343,7 @@ export default function StudioMethodStep({
                   </button>
                 )) : (
                   <div style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.14)', background: 'rgba(15, 23, 42, 0.5)', ...helperTextStyle }}>
-                    한줄 프롬프트를 4자 이상 입력하면 추천 프롬프트를 생성합니다.
+                    추천 프롬프트를 불러오는 중입니다. 새로고침으로 다른 제안도 볼 수 있습니다.
                   </div>
                 )}
               </div>

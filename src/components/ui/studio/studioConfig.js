@@ -208,6 +208,28 @@ const RECOMMENDATION_INTENTS = [
   '시각 cue가 들어갈 위치가 자연스럽게 보이게',
 ]
 
+const DOC_STARTER_TOPICS = [
+  '생성형 AI 도입 전략',
+  '신규 SaaS 출시 계획',
+  '조직 생산성 혁신 방안',
+  '고객 서비스 자동화 전략',
+  '데이터 거버넌스 정비안',
+  '브랜드 리포지셔닝 제안',
+  '글로벌 시장 진출 로드맵',
+  '사내 교육 프로그램 기획',
+]
+
+const PPT_STARTER_TOPICS = [
+  '생성형 AI 시장 기회',
+  '신규 서비스 피치 덱',
+  '투자자용 성장 전략',
+  '제품 로드맵 제안',
+  'B2B 세일즈 전략 발표',
+  '마케팅 캠페인 기획안',
+  '조직 혁신 제안 발표',
+  '리스크 대응 전략 브리핑',
+]
+
 const mapDensityToLegacy = (density = 'balanced') => {
   if (density === 'simple') return 'light'
   if (density === 'balanced') return 'balanced'
@@ -299,25 +321,30 @@ export const buildInitialStudioSession = (mode = 'docs') => ({
 
 export const buildPromptRecommendations = ({ mode = 'docs', promptLine = '', language = 'ko', seed = 0 } = {}) => {
   const topic = extractOverviewHeadline(promptLine)
-  if (topic.length < 4) return []
-
-  const random = createSeededRandom(hashString(`${mode}:${topic}:${language}:${seed}`))
+  const starterTopics = shuffleWithSeed(
+    mode === 'docs' ? DOC_STARTER_TOPICS : PPT_STARTER_TOPICS,
+    createSeededRandom(hashString(`${mode}:starter:${language}:${seed}`))
+  )
+  const random = createSeededRandom(hashString(`${mode}:${topic || starterTopics.join('|')}:${language}:${seed}`))
   const frames = shuffleWithSeed(mode === 'docs' ? DOC_RECOMMENDATION_FRAMES : PPT_RECOMMENDATION_FRAMES, random)
   const intents = shuffleWithSeed(RECOMMENDATION_INTENTS, random)
   const count = 6 + Math.floor(random() * 2)
   const languageLabel = LANGUAGE_OPTIONS.find((item) => item.id === language)?.label || '한국어'
 
   return frames.slice(0, count).map((frame, index) => {
+    const currentTopic = topic || starterTopics[index % starterTopics.length]
     const intent = intents[index % intents.length]
     const text = mode === 'docs'
-      ? `${topic}를 ${frame}로 정리하되 ${intent} 구성하고 ${languageLabel}로 작성`
-      : `${topic}를 ${frame}으로 만들되 ${intent} 발표 흐름으로 정리하고 ${languageLabel}로 작성`
+      ? `${currentTopic}를 ${frame}로 정리하되 ${intent} 구성하고 ${languageLabel}로 작성`
+      : `${currentTopic}를 ${frame}으로 만들되 ${intent} 발표 흐름으로 정리하고 ${languageLabel}로 작성`
 
     return {
-      id: `${mode}-${seed}-${index}`,
-      title: `${topic} · ${frame}`,
+      id: `${mode}-${topic || 'starter'}-${seed}-${index}`,
+      title: `${currentTopic} · ${frame}`,
       text,
-      description: `${intent}. 클릭하면 입력창에 자동 반영됩니다.`,
+      description: topic
+        ? `${intent}. 클릭하면 입력창에 자동 반영됩니다.`
+        : `${intent}. 아직 주제를 안 정했으면 여기서 바로 시작할 수 있습니다.`,
     }
   })
 }
